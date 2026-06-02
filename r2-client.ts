@@ -2,7 +2,8 @@
 // CLI. Lives here (not in lib/cdn.ts) because it imports `bun` and shells out to
 // `passage` — lib/cdn.ts stays pure so it survives the Worker promotion.
 
-import { S3Client, $ } from "bun";
+import { $, S3Client } from "bun";
+
 import { BUCKET } from "./lib/cdn.ts";
 
 let clientPromise: Promise<S3Client> | null = null;

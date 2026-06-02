@@ -4,20 +4,39 @@
 // These deliberately hit live R2 (not a mock) because the bugs worth catching
 // are R2/Bun-S3 behaviors — trailing-slash handling, content-type on copy, etc.
 
-import { test, expect, describe, beforeAll, afterAll } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import type { S3Client } from "bun";
+
 import { getR2Client } from "./r2-client.ts";
-import { tree, createFolder, move, rename, remove } from "./storage.ts";
+import { createFolder, move, remove, rename, tree } from "./storage.ts";
 
 const PREFIX = `__test__/${crypto.randomUUID().slice(0, 8)}/`;
 let client: S3Client;
 
-const put = (key: string, body: any, type: string) => client.write(key, body, { type });
-async function exists(key: string) { try { await client.stat(key); return true; } catch { return false; } }
-async function typeOf(key: string) { try { return (await client.stat(key)).type; } catch { return null; } }
+const put = (key: string, body: string | Uint8Array, type: string) =>
+  client.write(key, body, { type });
+async function exists(key: string) {
+  try {
+    await client.stat(key);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function typeOf(key: string) {
+  try {
+    return (await client.stat(key)).type;
+  } catch {
+    return null;
+  }
+}
 
-beforeAll(async () => { client = await getR2Client(); });
-afterAll(async () => { await remove(PREFIX); }); // recursive delete of the whole test prefix
+beforeAll(async () => {
+  client = await getR2Client();
+});
+afterAll(async () => {
+  await remove(PREFIX);
+}); // recursive delete of the whole test prefix
 
 describe("createFolder", () => {
   test("makes an empty folder visible via a hidden .keep marker", async () => {
@@ -35,9 +54,9 @@ describe("tree", () => {
     await put(`${PREFIX}t/pic.png`, "x", "image/png");
     const entry = (await tree()).find((o) => o.key === `${PREFIX}t/pic.png`);
     expect(entry).toBeDefined();
-    expect(entry!.ext).toBe("png");
-    expect(entry!.category).toBe("image");
-    expect(entry!.url).toBe(`https://cdn.ramonfabrega.com/${PREFIX}t/pic.png`);
+    expect(entry?.ext).toBe("png");
+    expect(entry?.category).toBe("image");
+    expect(entry?.url).toBe(`https://cdn.ramonfabrega.com/${PREFIX}t/pic.png`);
   });
 });
 

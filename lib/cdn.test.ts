@@ -1,5 +1,6 @@
-import { test, expect, describe } from "bun:test";
-import { classify, mimeFor, randomKey, publicUrl, humanSize, categoryForExt } from "./cdn.ts";
+import { describe, expect, test } from "bun:test";
+
+import { categoryForExt, classify, humanSize, mimeFor, publicUrl, randomKey } from "./cdn.ts";
 
 describe("classify", () => {
   test("by extension", () => {

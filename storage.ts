@@ -4,8 +4,8 @@
 // Runtime-specific half. When promoted to a Worker, this gets an R2-binding
 // sibling with the same exported shape. `lib/cdn.ts` stays pure (imported by both).
 
+import { classify, mimeFor, publicUrl } from "./lib/cdn.ts";
 import { getR2Client as getClient } from "./r2-client.ts";
-import { classify, publicUrl, mimeFor } from "./lib/cdn.ts";
 
 export type Entry = {
   key: string;
@@ -24,14 +24,9 @@ async function listAll(prefix = ""): Promise<RawObj[]> {
   const out: RawObj[] = [];
   let token: string | undefined;
   do {
-    const res: any = await client.list({ prefix, maxKeys: 1000, continuationToken: token });
+    const res = await client.list({ prefix, maxKeys: 1000, continuationToken: token });
     for (const o of res.contents ?? []) {
-      out.push({
-        key: o.key,
-        size: o.size ?? 0,
-        lastModified:
-          typeof o.lastModified === "string" ? o.lastModified : (o.lastModified?.toISOString?.() ?? ""),
-      });
+      out.push({ key: o.key, size: o.size ?? 0, lastModified: o.lastModified ?? "" });
     }
     token = res.isTruncated ? res.nextContinuationToken : undefined;
   } while (token);
@@ -45,7 +40,14 @@ export async function tree(): Promise<Entry[]> {
   const raws = await listAll("");
   return raws.map((o) => {
     const c = classify(o.key);
-    return { key: o.key, size: o.size, lastModified: o.lastModified, ext: c.ext, category: c.category, url: publicUrl(o.key) };
+    return {
+      key: o.key,
+      size: o.size,
+      lastModified: o.lastModified,
+      ext: c.ext,
+      category: c.category,
+      url: publicUrl(o.key),
+    };
   });
 }
 

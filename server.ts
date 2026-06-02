@@ -9,18 +9,22 @@
 // If CDN_PASSWORD is unset, a loud dev default is used (fine for localhost only).
 
 import { Hono } from "hono";
-import { getSignedCookie, setSignedCookie, deleteCookie } from "hono/cookie";
-import { tree, createFolder, move, rename, remove } from "./storage.ts";
+import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
+
 import { DOMAIN } from "./lib/cdn.ts";
+import { createFolder, move, remove, rename, tree } from "./storage.ts";
 
 const PASSWORD = process.env.CDN_PASSWORD ?? "letmein";
 if (!process.env.CDN_PASSWORD) {
-  console.warn("⚠  CDN_PASSWORD not set — using dev default 'letmein'. Set it for anything non-local.");
+  console.warn(
+    "⚠  CDN_PASSWORD not set — using dev default 'letmein'. Set it for anything non-local."
+  );
 }
 // Deterministic session secret so cookies survive restarts during dev.
 const SECRET = process.env.CDN_SESSION_SECRET ?? `${PASSWORD}::cdn-explorer-session`;
 const COOKIE = "cdn_session";
 const PUBLIC_PATHS = new Set(["/login", "/health"]);
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 const app = new Hono();
 
@@ -71,8 +75,8 @@ app.get("/logout", (c) => {
 app.get("/api/tree", async (c) => {
   try {
     return c.json({ domain: DOMAIN, objects: await tree() });
-  } catch (e: any) {
-    return c.json({ error: e?.message ?? String(e) }, 500);
+  } catch (e) {
+    return c.json({ error: errMsg(e) }, 500);
   }
 });
 
@@ -82,8 +86,8 @@ app.post("/api/folder", async (c) => {
     const { prefix = "", name } = await c.req.json();
     const key = await createFolder(prefix, name);
     return c.json({ ok: true, key });
-  } catch (e: any) {
-    return c.json({ error: e?.message ?? String(e) }, 400);
+  } catch (e) {
+    return c.json({ error: errMsg(e) }, 400);
   }
 });
 
@@ -96,12 +100,16 @@ app.post("/api/move", async (c) => {
     const results: { key: string; ok: boolean; error?: string }[] = [];
     let moved = 0;
     for (const k of list) {
-      try { moved += await move(k, to); results.push({ key: k, ok: true }); }
-      catch (e: any) { results.push({ key: k, ok: false, error: e?.message ?? String(e) }); }
+      try {
+        moved += await move(k, to);
+        results.push({ key: k, ok: true });
+      } catch (e) {
+        results.push({ key: k, ok: false, error: errMsg(e) });
+      }
     }
     return c.json({ ok: results.every((r) => r.ok), moved, results });
-  } catch (e: any) {
-    return c.json({ error: e?.message ?? String(e) }, 400);
+  } catch (e) {
+    return c.json({ error: errMsg(e) }, 400);
   }
 });
 
@@ -111,8 +119,8 @@ app.post("/api/rename", async (c) => {
     if (!key) throw new Error("missing 'key'");
     const renamed = await rename(key, name);
     return c.json({ ok: true, renamed });
-  } catch (e: any) {
-    return c.json({ error: e?.message ?? String(e) }, 400);
+  } catch (e) {
+    return c.json({ error: errMsg(e) }, 400);
   }
 });
 
@@ -125,12 +133,16 @@ app.post("/api/delete", async (c) => {
     const results: { key: string; ok: boolean; error?: string }[] = [];
     let deleted = 0;
     for (const k of list) {
-      try { deleted += await remove(k); results.push({ key: k, ok: true }); }
-      catch (e: any) { results.push({ key: k, ok: false, error: e?.message ?? String(e) }); }
+      try {
+        deleted += await remove(k);
+        results.push({ key: k, ok: true });
+      } catch (e) {
+        results.push({ key: k, ok: false, error: errMsg(e) });
+      }
     }
     return c.json({ ok: results.every((r) => r.ok), deleted, results });
-  } catch (e: any) {
-    return c.json({ error: e?.message ?? String(e) }, 400);
+  } catch (e) {
+    return c.json({ error: errMsg(e) }, 400);
   }
 });
 

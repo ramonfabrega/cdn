@@ -10,7 +10,7 @@
   <header>
     <span class="brand">🗂 <b>cdn</b>.ramonfabrega.com</span>
     <label class="search"><span style="color:var(--faint)">⌕</span><input id="q" type="search" placeholder="search all files…" autocomplete="off"></label>
-    <button class="signout" onclick="location.href='/logout'">Sign out</button>
+    <button type="button" class="signout" onclick="location.href='/logout'">Sign out</button>
   </header>
 
   <div class="app" id="app">
@@ -18,13 +18,13 @@
     <div class="side" id="side"><div class="shead">Projects</div><div id="tree"></div></div>
     <div class="main">
       <div class="mbar">
-        <button class="drawerbtn" id="drawerbtn" aria-label="Folders">☰</button>
+        <button type="button" class="drawerbtn" id="drawerbtn" aria-label="Folders">☰</button>
         <nav class="crumbs" id="crumbs"></nav>
-        <button class="mbtn" id="newfld">+ folder</button>
+        <button type="button" class="mbtn" id="newfld">+ folder</button>
       </div>
       <div class="rows" id="rows"><div class="state">Loading…</div></div>
     </div>
-    <div class="sheet" id="sheet"><div class="sh"><span id="sheettitle">…</span><button class="x" id="sheetx">×</button></div><div class="sbody" id="sbody"></div></div>
+    <div class="sheet" id="sheet"><div class="sh"><span id="sheettitle">…</span><button type="button" class="x" id="sheetx">×</button></div><div class="sbody" id="sbody"></div></div>
   </div>
 
   <div class="pscrim" id="pscrim"></div>
