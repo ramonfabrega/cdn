@@ -1,15 +1,18 @@
 const $ = (s) => document.querySelector(s);
-const app = $("#app"),
-  rowsEl = $("#rows"),
-  treeEl = $("#tree"),
-  crumbsEl = $("#crumbs"),
+const railEl = $("#rail"),
+  scopeEl = $("#scope"),
+  countEl = $("#count"),
+  listEl = $("#list"),
   qEl = $("#q"),
-  sbody = $("#sbody"),
-  sheetTitle = $("#sheettitle"),
   preview = $("#preview"),
   pscrim = $("#pscrim"),
-  scrim = $("#scrim"),
-  toastEl = $("#toast");
+  sheet = $("#sheet"),
+  sheetScrim = $("#sheetScrim"),
+  sbody = $("#sbody"),
+  sheetTitle = $("#sheettitle"),
+  menu = $("#menu"),
+  toastEl = $("#toast"),
+  railScrim = $("#railScrim");
 const COLOR = {
   image: "--t-image",
   video: "--t-video",
@@ -22,14 +25,19 @@ const COLOR = {
   file: "--t-file",
 };
 
-let objects = [],
-  root = null,
-  sel = "",
-  expanded = { "": true },
-  sort = { col: "name", dir: 1 },
-  dragKey = null,
-  dragIsFolder = false;
+let objects = [];
+let q = "";
+let scope = null; // null = All files, "__root__" = root, "cuanto/" = a folder prefix
+let sort = { col: "name", dir: 1 };
 
+// ── helpers ──
+const esc = (s) =>
+  String(s).replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]
+  );
+const isMarker = (k) => k.endsWith("/") || k.endsWith("/.keep") || k === ".keep";
+const byKey = (k) => objects.find((o) => o.key === k);
 const fmtSize = (b) => {
   if (!Number.isFinite(b)) return "—";
   const u = ["B", "KB", "MB", "GB", "TB"];
@@ -44,490 +52,318 @@ const fmtSize = (b) => {
 const fmtDate = (s) => {
   if (!s) return "—";
   const d = new Date(s);
-  return (
-    d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
-    " " +
-    d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
-  );
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
 };
-const esc = (s) =>
-  String(s).replace(
-    /[&<>"]/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]
-  );
 function toast(m) {
   toastEl.textContent = m;
   toastEl.classList.add("show");
   clearTimeout(toast._t);
   toast._t = setTimeout(() => toastEl.classList.remove("show"), 1700);
 }
-function badge(o) {
-  return (
-    '<span class="badge" style="background:var(' +
-    (COLOR[o.category] || COLOR.file) +
-    ')">' +
-    esc(o.ext || "file") +
-    "</span>"
-  );
-}
 
-// ── build the nested tree from the flat object list ──
-function buildTree(objs) {
-  const r = { name: "cdn", path: "", children: {}, files: [] };
-  const folderAt = (parts) => {
-    let n = r,
-      acc = "";
+// ── scope / derive ──
+const files = () => objects.filter((o) => !isMarker(o.key));
+function inScope(key, sc) {
+  if (sc === null) return true;
+  if (sc === "__root__") return !key.includes("/");
+  return key.startsWith(sc);
+}
+const countFor = (sc) => files().filter((o) => inScope(o.key, sc)).length;
+function allPrefixes() {
+  const set = new Set([""]);
+  for (const o of objects) {
+    const parts = o.key.split("/");
+    parts.pop();
+    let acc = "";
     for (const p of parts) {
-      acc += `${p}/`;
-      n.children[p] ??= { name: p, path: acc, children: {}, files: [] };
-      n = n.children[p];
+      if (p) {
+        acc += `${p}/`;
+        set.add(acc);
+      }
     }
-    return n;
-  };
-  for (const o of objs) {
-    const parts = o.key.split("/").filter(Boolean);
-    const base = parts[parts.length - 1];
-    if (o.key.endsWith("/") || base === ".keep") {
-      // empty-folder marker: materialize folder, don't list it
-      folderAt(o.key.endsWith("/") ? parts : parts.slice(0, -1));
-      continue;
+  }
+  return [...set].sort();
+}
+function railItems() {
+  const items = [{ scope: null, label: "All files", depth: 0, root: true }];
+  for (const p of allPrefixes()) {
+    if (p === "") items.push({ scope: "__root__", label: "root", depth: 0 });
+    else {
+      const parts = p.split("/").filter(Boolean);
+      items.push({ scope: p, label: parts[parts.length - 1], depth: parts.length - 1 });
     }
-    const file = parts.pop();
-    folderAt(parts).files.push({ ...o, name: file });
   }
-  return r;
-}
-function nodeAt(path) {
-  let n = root;
-  for (const p of path.split("/").filter(Boolean)) {
-    if (!n.children[p]) return null;
-    n = n.children[p];
-  }
-  return n;
-}
-function folderCount(node) {
-  return Object.keys(node.children).length + node.files.length;
+  return items;
 }
 
 // ── data ──
-async function loadTree(keepSel) {
-  const prev = keepSel ? sel : "";
-  rowsEl.innerHTML = '<div class="state">Loading…</div>';
-  let data;
+async function load() {
+  listEl.innerHTML = Array.from(
+    { length: 8 },
+    (_, i) => `<div class="skel"><span style="width:${30 + ((i * 13) % 45)}%"></span></div>`
+  ).join("");
   try {
     const res = await fetch("/api/tree");
-    data = await res.json();
+    const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.status);
+    objects = data.objects || [];
   } catch (e) {
-    rowsEl.innerHTML = `<div class="state">Error: ${esc(e.message)}</div>`;
+    listEl.innerHTML = `<div class="state">Error: ${esc(e.message)}</div>`;
     return;
   }
-  objects = data.objects || [];
-  root = buildTree(objects);
-  sel = nodeAt(prev) ? prev : "";
+  if (scope && scope !== "__root__" && !railItems().some((it) => it.scope === scope)) scope = null;
   render();
 }
-async function mutate(url, body, okMsg) {
+async function mutate(url, payload, okMsg) {
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify(payload),
     });
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || res.status);
     closeSheet();
-    await loadTree(true);
+    await load();
     toast(okMsg);
   } catch (e) {
     toast(`Error: ${e.message}`);
   }
 }
 
-// ── render ──
-function arr(c) {
-  return sort.col === c ? (sort.dir > 0 ? "▲" : "▼") : "";
-}
-function render() {
-  renderTree();
-  renderCrumbs();
-  renderRows();
-}
-
-function renderTree() {
-  treeEl.innerHTML = "";
-  (function walk(node, depth) {
-    const folders = Object.values(node.children).sort((a, b) => a.name.localeCompare(b.name));
-    const row = document.createElement("div");
-    row.className = `tnode${node.path === sel ? " sel" : ""}`;
-    row.style.paddingLeft = `${8 + depth * 14}px`;
-    const has = folders.length > 0;
-    row.innerHTML =
-      '<span class="chev ' +
-      (has ? (expanded[node.path] ? "open" : "") : "leaf") +
-      '">▶</span>📁<span class="label">' +
-      esc(node.name) +
-      '</span><span class="tcount">' +
-      folderCount(node) +
-      "</span>";
-    row.querySelector(".chev").addEventListener("click", (e) => {
-      e.stopPropagation();
-      expanded[node.path] = !expanded[node.path];
-      renderTree();
-    });
-    row.addEventListener("click", () => {
-      sel = node.path;
-      expanded[node.path] = true;
-      closeDrawer();
-      qEl.value = "";
-      render();
-    });
-    wireFolderDrop(row, node);
-    treeEl.appendChild(row);
-    if (expanded[node.path])
-      folders.forEach((c) => {
-        walk(c, depth + 1);
-      });
-  })(root, 0);
-}
-
-function renderCrumbs() {
-  crumbsEl.innerHTML = "";
-  if (qEl.value.trim()) {
-    crumbsEl.innerHTML = `<a class="here">search: ${esc(qEl.value.trim())}</a>`;
-    return;
-  }
-  const parts = sel.split("/").filter(Boolean);
-  let acc = "";
-  const mk = (label, path, here) => {
-    const a = document.createElement("a");
-    a.textContent = label;
-    if (here) a.className = "here";
-    a.addEventListener("click", () => {
-      sel = path;
-      render();
-    });
-    return a;
-  };
-  crumbsEl.appendChild(mk("cdn", "", parts.length === 0));
-  parts.forEach((p, i) => {
-    acc += `${p}/`;
-    crumbsEl.insertAdjacentHTML("beforeend", '<span class="sep">/</span>');
-    crumbsEl.appendChild(mk(p, acc, i === parts.length - 1));
-  });
-}
-
-function renderRows() {
-  const q = qEl.value.trim().toLowerCase();
+// ── filter + sort ──
+function visible() {
+  let list = files();
   if (q) {
-    // global search across all files
-    const hits = objects
-      .filter(
-        (o) =>
-          !o.key.endsWith("/") &&
-          !o.key.endsWith("/.keep") &&
-          o.key !== ".keep" &&
-          o.key.toLowerCase().includes(q)
-      )
-      .map((o) => ({ ...o, name: o.key.split("/").pop() }));
-    rowsEl.innerHTML = hits.length
-      ? hits.map((o) => fileRow(o, true)).join("")
-      : '<div class="state">No matches.</div>';
-    wireRows();
-    return;
-  }
-  const node = nodeAt(sel) || root;
-  const folders = Object.values(node.children).map((f) => ({
-    type: "folder",
-    name: f.name,
-    path: f.path,
-    n: folderCount(f),
-  }));
-  const files = node.files.map((f) => ({ type: "file", ...f }));
+    const t = q.toLowerCase();
+    list = list.filter((o) => o.key.toLowerCase().includes(t));
+  } else list = list.filter((o) => inScope(o.key, scope));
   const dir = sort.dir;
-  const cmp = (a, b) =>
+  list.sort((a, b) =>
     sort.col === "size"
       ? ((a.size || 0) - (b.size || 0)) * dir
-      : sort.col === "date"
-        ? (new Date(a.lastModified || 0) - new Date(b.lastModified || 0)) * dir
-        : a.name.localeCompare(b.name, undefined, { numeric: true }) * dir;
-  folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  files.sort(cmp);
-  if (!folders.length && !files.length) {
-    rowsEl.innerHTML = '<div class="state">This folder is empty.</div>';
+      : sort.col === "type"
+        ? (a.ext || "~").localeCompare(b.ext || "~") * dir
+        : sort.col === "date"
+          ? (new Date(a.lastModified || 0) - new Date(b.lastModified || 0)) * dir
+          : a.key.localeCompare(b.key, undefined, { numeric: true }) * dir
+  );
+  return list;
+}
+
+// ── render ──
+const arr = (c) => (sort.col === c ? (sort.dir > 0 ? "▲" : "▼") : "");
+function render() {
+  renderRail();
+  renderList();
+}
+function renderRail() {
+  railEl.innerHTML = railItems()
+    .map((it) => {
+      const sc = it.scope === null ? "__all__" : it.scope;
+      const on = scope === it.scope || (it.scope === null && scope === null);
+      const ico = it.scope === null ? "🗂" : "📁";
+      return `<div class="sitem${on ? " on" : ""}" data-scope="${esc(sc)}" style="padding-left:${10 + it.depth * 14}px"><span class="ico">${ico}</span><span class="lbl">${esc(it.label)}</span><span class="n">${countFor(it.scope)}</span></div>`;
+    })
+    .join("");
+}
+function badge(o) {
+  return `<span class="badge typecol" style="background:var(${COLOR[o.category] || COLOR.file})">${esc(o.ext || "file")}</span>`;
+}
+function rowHtml(o) {
+  const slash = o.key.lastIndexOf("/");
+  const prefix = slash === -1 ? "" : o.key.slice(0, slash + 1);
+  const base = o.key.slice(slash + 1);
+  return `<div class="row" data-key="${esc(o.key)}">
+    <span class="nm"><span class="label" title="${esc(o.key)}"><span class="ns">${esc(prefix)}</span><span class="base">${esc(base)}</span></span></span>
+    ${badge(o)}
+    <span class="sz">${fmtSize(o.size)}</span>
+    <span class="dt dtcol">${fmtDate(o.lastModified)}</span>
+    <button type="button" class="more" data-more aria-label="actions">⋯</button>
+  </div>`;
+}
+function renderList() {
+  scopeEl.textContent = scope === null ? "All files" : scope === "__root__" ? "root" : scope;
+  const rows = visible();
+  countEl.textContent = q ? `${rows.length} matches` : `${rows.length} files`;
+  if (!rows.length) {
+    listEl.innerHTML = `<div class="state">${q ? "No matches." : "Empty."}</div>`;
     return;
   }
-  rowsEl.innerHTML =
-    '<div class="hd"><span data-sort="name">Name <i class="ar">' +
-    arr("name") +
-    '</i></span><span class="ralign" data-sort="size">Size <i class="ar">' +
-    arr("size") +
-    '</i></span><span class="dtcol" data-sort="date">Modified <i class="ar">' +
-    arr("date") +
-    "</i></span></div>" +
-    folders.map(folderRow).join("") +
-    files.map((o) => fileRow(o, false)).join("");
-  wireRows();
-}
-function acts() {
-  return '<span class="acts"><button data-mv>Move</button><button data-rn>Rename</button><button class="del" data-del>Delete</button></span>';
-}
-function folderRow(f) {
-  return (
-    '<div class="r folder" data-path="' +
-    esc(f.path) +
-    '"><span class="nm"><span class="fldico">📁</span><span class="label">' +
-    esc(f.name) +
-    '/</span></span><span class="sz">' +
-    f.n +
-    '</span><span class="dt dtcol">—</span>' +
-    acts() +
-    "</div>"
-  );
-}
-function fileRow(o, withPath) {
-  const sub = withPath
-    ? '<span class="path"> ' +
-      esc(o.key.replace(/[^/]+$/, "").replace(/\/$/, "") || "/") +
-      "</span>"
-    : "";
-  return (
-    '<div class="r file" data-key="' +
-    esc(o.key) +
-    '"><span class="nm">' +
-    badge(o) +
-    '<span class="label">' +
-    esc(o.name) +
-    sub +
-    '</span></span><span class="sz">' +
-    fmtSize(o.size) +
-    '</span><span class="dt dtcol">' +
-    fmtDate(o.lastModified) +
-    "</span>" +
-    acts() +
-    "</div>"
-  );
+  const head = `<div class="hd">
+    <span data-sort="name">Name <i class="ar">${arr("name")}</i></span>
+    <span class="typecol" data-sort="type">Type <i class="ar">${arr("type")}</i></span>
+    <span class="ralign" data-sort="size">Size <i class="ar">${arr("size")}</i></span>
+    <span class="dtcol" data-sort="date">Modified <i class="ar">${arr("date")}</i></span>
+    <span></span>
+  </div>`;
+  listEl.innerHTML = head + rows.map(rowHtml).join("");
 }
 
-function wireRows() {
-  rowsEl.querySelectorAll(".hd span[data-sort]").forEach((s) => {
-    s.addEventListener("click", () => {
-      const c = s.dataset.sort;
-      sort = sort.col === c ? { col: c, dir: -sort.dir } : { col: c, dir: 1 };
-      render();
+// ── rail + list events ──
+railEl.addEventListener("click", (e) => {
+  const it = e.target.closest(".sitem");
+  if (!it) return;
+  scope = it.dataset.scope === "__all__" ? null : it.dataset.scope;
+  closeRail();
+  render();
+});
+listEl.addEventListener("click", (e) => {
+  const sortEl = e.target.closest("[data-sort]");
+  if (sortEl) {
+    const c = sortEl.dataset.sort;
+    sort = sort.col === c ? { col: c, dir: -sort.dir } : { col: c, dir: 1 };
+    renderList();
+    return;
+  }
+  const more = e.target.closest("[data-more]");
+  if (more) {
+    e.stopPropagation();
+    const r = more.getBoundingClientRect();
+    openMenu(more.closest(".row").dataset.key, r.right, r.bottom);
+    return;
+  }
+  const row = e.target.closest(".row");
+  if (row) {
+    const o = byKey(row.dataset.key);
+    if (o) openPreview(o);
+  }
+});
+listEl.addEventListener("contextmenu", (e) => {
+  const row = e.target.closest(".row");
+  if (!row) return;
+  e.preventDefault();
+  openMenu(row.dataset.key, e.clientX, e.clientY);
+});
+
+// ── context menu ──
+function openMenu(key, x, y) {
+  menu.innerHTML = `
+    <button type="button" data-act="copy">Copy link</button>
+    <button type="button" data-act="open">Open ↗</button>
+    <hr>
+    <button type="button" data-act="move">Move…</button>
+    <button type="button" data-act="rename">Rename…</button>
+    <button type="button" class="del" data-act="delete">Delete</button>`;
+  menu.querySelectorAll("button").forEach((b) => {
+    b.addEventListener("click", () => {
+      closeMenu();
+      doAct(b.dataset.act, key);
     });
   });
-  rowsEl.querySelectorAll(".r.folder").forEach((row) => {
-    const node = nodeAt(row.dataset.path);
-    row.addEventListener("click", (e) => {
-      if (e.target.closest("[data-mv],[data-del]")) return;
-      sel = row.dataset.path;
-      if (node) expanded[row.dataset.path] = true;
-      qEl.value = "";
-      render();
-    });
-    row.draggable = true;
-    row.addEventListener("dragstart", () => {
-      dragKey = row.dataset.path;
-      dragIsFolder = true;
-      row.classList.add("dragging");
-    });
-    row.addEventListener("dragend", () => row.classList.remove("dragging"));
-    if (node) wireFolderDrop(row, node);
-    bindActs(row, row.dataset.path, true);
-  });
-  rowsEl.querySelectorAll(".r.file").forEach((row) => {
-    const o = objects.find((x) => x.key === row.dataset.key);
-    row.addEventListener("click", (e) => {
-      if (e.target.closest("[data-mv],[data-del]")) return;
-      if (o) openPreview(o);
-    });
-    row.draggable = true;
-    row.addEventListener("dragstart", () => {
-      dragKey = row.dataset.key;
-      dragIsFolder = false;
-      row.classList.add("dragging");
-    });
-    row.addEventListener("dragend", () => row.classList.remove("dragging"));
-    bindActs(row, row.dataset.key, false);
-  });
+  menu.classList.add("show");
+  const w = menu.offsetWidth || 170,
+    h = menu.offsetHeight || 200;
+  menu.style.left = `${Math.max(8, Math.min(x - w, window.innerWidth - w - 8))}px`;
+  menu.style.top = `${Math.min(y + 2, window.innerHeight - h - 8)}px`;
 }
-function bindActs(row, key, isFolder) {
-  row.querySelector("[data-mv]").addEventListener("click", (e) => {
-    e.stopPropagation();
-    openMove(key, isFolder);
-  });
-  row.querySelector("[data-rn]").addEventListener("click", (e) => {
-    e.stopPropagation();
-    openRename(key, isFolder);
-  });
-  row.querySelector("[data-del]").addEventListener("click", (e) => {
-    e.stopPropagation();
-    openDelete(key, isFolder);
-  });
+function closeMenu() {
+  menu.classList.remove("show");
+}
+function doAct(action, key) {
+  const o = byKey(key);
+  if (action === "copy") {
+    navigator.clipboard.writeText(o.url);
+    toast("Link copied");
+  } else if (action === "open") window.open(o.url, "_blank", "noopener");
+  else if (action === "move") openMove(key);
+  else if (action === "rename") openRename(key);
+  else if (action === "delete") openDelete(key);
 }
 
-// ── drag/move targets ──
-function canDrop(folderPath) {
-  return (
-    dragKey !== null &&
-    (dragIsFolder ? folderPath !== dragKey && !folderPath.startsWith(dragKey) : true) &&
-    parentOf(dragKey) !== folderPath
-  );
-}
-function parentOf(key) {
-  const k = key.replace(/\/$/, "");
-  return k.includes("/") ? k.slice(0, k.lastIndexOf("/") + 1) : "";
-}
-function wireFolderDrop(el, node) {
-  el.addEventListener("dragover", (e) => {
-    if (canDrop(node.path)) {
-      e.preventDefault();
-      el.classList.add("dropok");
-    }
-  });
-  el.addEventListener("dragleave", () => el.classList.remove("dropok"));
-  el.addEventListener("drop", (e) => {
-    e.preventDefault();
-    el.classList.remove("dropok");
-    const k = dragKey;
-    confirmMove(k, node.path);
-  });
-}
-
-// ── sheet: move (pick → confirm) / delete / new folder ──
+// ── sheet (move / rename / delete / new folder) ──
 function openSheet(title) {
   sheetTitle.textContent = title;
-  app.classList.add("sheetopen", "open");
+  sheet.classList.add("show");
+  sheetScrim.classList.add("show");
 }
 function closeSheet() {
-  app.classList.remove("sheetopen", "open");
+  sheet.classList.remove("show");
+  sheetScrim.classList.remove("show");
 }
-function closeDrawer() {
-  app.classList.remove("open");
-}
-function allFolderPaths() {
-  const out = [];
-  (function w(n) {
-    out.push(n.path);
-    Object.values(n.children).forEach(w);
-  })(root);
-  return out;
-}
-
-function openMove(key, isFolder) {
-  sbody.innerHTML = "";
-  allFolderPaths().forEach((path) => {
-    const bad = parentOf(key) === path || (isFolder && (path === key || path.startsWith(key)));
-    const p = document.createElement("div");
-    p.className = `pick${bad ? " disabled" : ""}`;
-    p.innerHTML = `📁 <span>${path || "cdn/"}</span>`;
-    if (!bad) p.addEventListener("click", () => confirmMove(key, path));
-    sbody.appendChild(p);
+function openMove(key) {
+  const cur = key.slice(0, key.lastIndexOf("/") + 1);
+  sbody.innerHTML = allPrefixes()
+    .map(
+      (p) =>
+        `<div class="pick${p === cur ? " disabled" : ""}" data-to="${esc(p)}">📁 ${esc(p || "root")}</div>`
+    )
+    .join("");
+  sbody.querySelectorAll(".pick:not(.disabled)").forEach((el) => {
+    el.addEventListener("click", () => confirmMove(key, el.dataset.to));
   });
-  openSheet(`Move “${key.replace(/\/$/, "").split("/").pop()}” to…`);
+  openSheet(`Move “${key.split("/").pop()}” to…`);
 }
 function confirmMove(key, to) {
-  const name = key.replace(/\/$/, "").split("/").pop();
-  sbody.innerHTML =
-    '<div class="confirm"><p>Move <b>' +
-    esc(name) +
-    "</b> → <b>" +
-    esc(to || "cdn/") +
-    '</b>. <span class="warn">The key changes, so the public URL changes and old links break.</span></p><div class="cbtns"><button class="cancel" data-c>Cancel</button><button class="go" data-go>Move</button></div></div>';
+  const name = key.split("/").pop();
+  sbody.innerHTML = `<div class="confirm"><p>Move <b>${esc(name)}</b> → <b>${esc(to || "root")}</b>. <span class="warn">The key changes, so the public URL changes and old links break.</span></p><div class="cbtns"><button type="button" class="cancel" data-c>Cancel</button><button type="button" class="go" data-go>Move</button></div></div>`;
   sbody.querySelector("[data-c]").addEventListener("click", closeSheet);
   sbody
     .querySelector("[data-go]")
     .addEventListener("click", () => mutate("/api/move", { from: key, to }, `Moved “${name}”`));
   openSheet("Confirm move");
 }
-function openDelete(key, isFolder) {
-  const name = key.replace(/\/$/, "").split("/").pop();
-  const node = isFolder ? nodeAt(key) : null;
-  const extra = isFolder && node ? ` and its ${countDeep(node)} item(s)` : "";
-  sbody.innerHTML =
-    '<div class="confirm"><p>Delete <b>' +
-    esc(name) +
-    (isFolder ? "/" : "") +
-    "</b>" +
-    extra +
-    '. <span class="warn">Gone for good — the public URL' +
-    (isFolder ? "s" : "") +
-    ' stop working.</span></p><div class="cbtns"><button class="cancel" data-c>Cancel</button><button class="danger" data-go>Delete</button></div></div>';
+function openRename(key) {
+  const cur = key.split("/").pop();
+  sbody.innerHTML = `<div class="confirm"><p>Rename <b>${esc(cur)}</b></p><input id="rn" class="nfname" value="${esc(cur)}"><div class="cbtns"><button type="button" class="cancel" data-c>Cancel</button><button type="button" class="go" data-go>Rename</button></div></div>`;
+  sbody.querySelector("[data-c]").addEventListener("click", closeSheet);
+  const go = () => {
+    const name = $("#rn").value.trim();
+    if (name && name !== cur) mutate("/api/rename", { key, name }, `Renamed to “${name}”`);
+    else closeSheet();
+  };
+  sbody.querySelector("[data-go]").addEventListener("click", go);
+  $("#rn").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") go();
+  });
+  openSheet("Rename");
+  setTimeout(() => {
+    const el = $("#rn");
+    el.focus();
+    const dot = cur.includes(".") ? cur.lastIndexOf(".") : cur.length;
+    el.setSelectionRange(0, dot);
+  }, 50);
+}
+function openDelete(key) {
+  const name = key.split("/").pop();
+  sbody.innerHTML = `<div class="confirm"><p>Delete <b>${esc(name)}</b>. <span class="warn">Gone for good — the public URL stops working.</span></p><div class="cbtns"><button type="button" class="cancel" data-c>Cancel</button><button type="button" class="danger" data-go>Delete</button></div></div>`;
   sbody.querySelector("[data-c]").addEventListener("click", closeSheet);
   sbody
     .querySelector("[data-go]")
     .addEventListener("click", () => mutate("/api/delete", { key }, `Deleted “${name}”`));
   openSheet("Confirm delete");
 }
-function countDeep(node) {
-  let c = node.files.length;
-  Object.values(node.children).forEach((k) => {
-    c += 1 + countDeep(k);
-  });
-  return c;
-}
-function openRename(key, isFolder) {
-  const cur = key.replace(/\/$/, "").split("/").pop();
-  sbody.innerHTML =
-    '<div class="confirm"><p>Rename <b>' +
-    esc(cur) +
-    "</b>" +
-    (isFolder ? "/" : "") +
-    '</p><input id="rnname" class="nfname" value="' +
-    esc(cur) +
-    '"><div class="cbtns"><button class="cancel" data-c>Cancel</button><button class="go" data-go>Rename</button></div></div>';
+$("#newfld").addEventListener("click", () => {
+  const prefix = scope === null || scope === "__root__" ? "" : scope;
+  sbody.innerHTML = `<div class="confirm"><p>New folder in <b>${esc(prefix || "root")}</b></p><input id="nf" class="nfname" placeholder="folder name"><div class="cbtns"><button type="button" class="cancel" data-c>Cancel</button><button type="button" class="go" data-go>Create</button></div></div>`;
   sbody.querySelector("[data-c]").addEventListener("click", closeSheet);
   const go = () => {
-    const name = $("#rnname").value.trim();
-    if (name && name !== cur) mutate("/api/rename", { key, name }, `Renamed to “${name}”`);
-    else closeSheet();
+    const name = $("#nf").value.trim();
+    if (name) mutate("/api/folder", { prefix, name }, `Created “${name}”`);
   };
   sbody.querySelector("[data-go]").addEventListener("click", go);
-  $("#rnname").addEventListener("keydown", (e) => {
+  $("#nf").addEventListener("keydown", (e) => {
     if (e.key === "Enter") go();
   });
-  openSheet("Rename");
-  setTimeout(() => {
-    const el = $("#rnname");
-    el.focus();
-    const dot = !isFolder && cur.includes(".") ? cur.lastIndexOf(".") : cur.length;
-    el.setSelectionRange(0, dot);
-  }, 50);
-}
+  openSheet("New folder");
+  setTimeout(() => $("#nf").focus(), 50);
+});
 
 // ── preview ──
 function openPreview(o) {
-  let body;
-  if (o.category === "image") body = `<img src="${o.url}" alt="">`;
-  else if (o.category === "video") body = `<video src="${o.url}" controls autoplay></video>`;
+  let pbody;
+  if (o.category === "image") pbody = `<img src="${o.url}" alt="">`;
+  else if (o.category === "video") pbody = `<video src="${o.url}" controls autoplay></video>`;
   else if (o.category === "audio")
-    body =
-      '<div class="noprev"><span class="big">🎵</span><audio src="' +
-      o.url +
-      '" controls></audio></div>';
+    pbody = `<div class="noprev"><span class="big">🎵</span><audio src="${o.url}" controls></audio></div>`;
   else if (o.category === "archive")
-    body = '<div class="noprev"><span class="big">🗜</span>No inline preview — use Open.</div>';
+    pbody = `<div class="noprev"><span class="big">🗜</span>No inline preview — use Open.</div>`;
   else
-    body =
-      '<iframe src="' +
-      o.url +
-      '" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>';
+    pbody = `<iframe src="${o.url}" sandbox="allow-same-origin allow-scripts allow-popups"></iframe>`;
   const nm = o.key.split("/").pop();
-  preview.innerHTML =
-    '<div class="ph"><span class="label" title="' +
-    esc(o.key) +
-    '">' +
-    esc(nm) +
-    '</span><button class="x" id="px">×</button></div>' +
-    '<div class="pbody">' +
-    body +
-    "</div>" +
-    '<div class="pfoot"><div class="url">' +
-    esc(o.url) +
-    '</div><div class="btns"><button id="pcopy">Copy link</button><a class="primary" href="' +
-    o.url +
-    '" target="_blank" rel="noopener">Open ↗</a></div></div>';
+  preview.innerHTML = `<div class="ph"><span class="label" title="${esc(o.key)}">${esc(nm)}</span><button type="button" class="x" id="px">×</button></div>
+    <div class="pbody">${pbody}</div>
+    <div class="pfoot"><div class="url">${esc(o.url)}</div><div class="btns"><button type="button" id="pcopy">Copy link</button><a class="primary" href="${o.url}" target="_blank" rel="noopener">Open ↗</a></div></div>`;
   preview.classList.add("show");
   pscrim.classList.add("show");
   $("#px").addEventListener("click", closePreview);
@@ -541,40 +377,46 @@ function closePreview() {
   pscrim.classList.remove("show");
 }
 
-// ── events ──
-$("#drawerbtn").addEventListener("click", () => app.classList.toggle("open"));
-scrim.addEventListener("click", () => {
-  closeSheet();
-  closeDrawer();
+// ── rail drawer (mobile) ──
+const closeRail = () => {
+  railEl.classList.remove("open");
+  railScrim.classList.remove("show");
+};
+$("#railbtn").addEventListener("click", () => {
+  railEl.classList.toggle("open");
+  railScrim.classList.toggle("show");
 });
-$("#sheetx").addEventListener("click", closeSheet);
+railScrim.addEventListener("click", closeRail);
+
+// ── global events ──
+qEl.addEventListener("input", () => {
+  q = qEl.value.trim();
+  renderList();
+});
 pscrim.addEventListener("click", closePreview);
+sheetScrim.addEventListener("click", closeSheet);
+$("#sheetx").addEventListener("click", closeSheet);
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#menu") && !e.target.closest("[data-more]")) closeMenu();
+});
+window.addEventListener("scroll", closeMenu, true);
 document.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+    e.preventDefault();
+    qEl.focus();
+    qEl.select();
+    return;
+  }
   if (e.key === "Escape") {
-    closePreview();
-    closeSheet();
+    closeMenu();
+    if (preview.classList.contains("show")) closePreview();
+    else if (sheet.classList.contains("show")) closeSheet();
+    else if (document.activeElement === qEl && qEl.value) {
+      qEl.value = "";
+      q = "";
+      renderList();
+    }
   }
 });
-$("#newfld").addEventListener("click", () => {
-  sbody.innerHTML =
-    '<div class="confirm"><p>New folder in <b>' +
-    esc(sel || "cdn/") +
-    '</b></p><input id="nfname" class="nfname" placeholder="folder name"><div class="cbtns"><button class="cancel" data-c>Cancel</button><button class="go" data-go>Create</button></div></div>';
-  sbody.querySelector("[data-c]").addEventListener("click", closeSheet);
-  const go = () => {
-    const name = $("#nfname").value.trim();
-    if (name) mutate("/api/folder", { prefix: sel, name }, `Created “${name}”`);
-  };
-  sbody.querySelector("[data-go]").addEventListener("click", go);
-  $("#nfname").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") go();
-  });
-  openSheet("New folder");
-  setTimeout(() => $("#nfname").focus(), 50);
-});
-qEl.addEventListener("input", () => {
-  renderCrumbs();
-  renderRows();
-});
 
-loadTree(false);
+load();

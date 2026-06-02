@@ -8,27 +8,37 @@
 </head>
 <body>
   <header>
-    <span class="brand">🗂 <b>cdn</b>.ramonfabrega.com</span>
-    <label class="search"><span style="color:var(--faint)">⌕</span><input id="q" type="search" placeholder="search all files…" autocomplete="off"></label>
+    <button type="button" class="railbtn" id="railbtn" aria-label="Folders">☰</button>
+    <span class="brand">🗂 <b>cdn</b><span class="host">.ramonfabrega.com</span></span>
+    <label class="search">
+      <span class="sicon">⌕</span>
+      <input id="q" type="search" placeholder="search files…" autocomplete="off" spellcheck="false">
+      <kbd>⌘K</kbd>
+    </label>
     <button type="button" class="signout" onclick="location.href='/logout'">Sign out</button>
   </header>
 
-  <div class="app" id="app">
-    <div class="scrim" id="scrim"></div>
-    <div class="side" id="side"><div class="shead">Projects</div><div id="tree"></div></div>
-    <div class="main">
-      <div class="mbar">
-        <button type="button" class="drawerbtn" id="drawerbtn" aria-label="Folders">☰</button>
-        <nav class="crumbs" id="crumbs"></nav>
+  <div class="body">
+    <nav class="rail" id="rail"></nav>
+    <main class="main">
+      <div class="mainbar">
+        <span class="scope" id="scope"></span>
+        <span class="count" id="count"></span>
         <button type="button" class="mbtn" id="newfld">+ folder</button>
       </div>
-      <div class="rows" id="rows"><div class="state">Loading…</div></div>
-    </div>
-    <div class="sheet" id="sheet"><div class="sh"><span id="sheettitle">…</span><button type="button" class="x" id="sheetx">×</button></div><div class="sbody" id="sbody"></div></div>
+      <div class="list" id="list"></div>
+    </main>
   </div>
 
+  <div class="rail-scrim" id="railScrim"></div>
   <div class="pscrim" id="pscrim"></div>
   <aside class="preview" id="preview"></aside>
+  <div class="sheet-scrim" id="sheetScrim"></div>
+  <div class="sheet" id="sheet">
+    <div class="sh"><span id="sheettitle">…</span><button type="button" class="x" id="sheetx">×</button></div>
+    <div class="sbody" id="sbody"></div>
+  </div>
+  <div class="menu" id="menu"></div>
   <div class="toast" id="toast"></div>
 
   <script type="module" src="/app.js"></script>
