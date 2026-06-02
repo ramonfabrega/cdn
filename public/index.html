@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>cdn · files</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header>
+    <span class="brand">🗂 <b>cdn</b>.ramonfabrega.com</span>
+    <label class="search"><span style="color:var(--faint)">⌕</span><input id="q" type="search" placeholder="search all files…" autocomplete="off"></label>
+    <button class="signout" onclick="location.href='/logout'">Sign out</button>
+  </header>
+
+  <div class="app" id="app">
+    <div class="scrim" id="scrim"></div>
+    <div class="side" id="side"><div class="shead">Projects</div><div id="tree"></div></div>
+    <div class="main">
+      <div class="mbar">
+        <button class="drawerbtn" id="drawerbtn" aria-label="Folders">☰</button>
+        <nav class="crumbs" id="crumbs"></nav>
+        <button class="mbtn" id="newfld">+ folder</button>
+      </div>
+      <div class="rows" id="rows"><div class="state">Loading…</div></div>
+    </div>
+    <div class="sheet" id="sheet"><div class="sh"><span id="sheettitle">…</span><button class="x" id="sheetx">×</button></div><div class="sbody" id="sbody"></div></div>
+  </div>
+
+  <div class="pscrim" id="pscrim"></div>
+  <aside class="preview" id="preview"></aside>
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
