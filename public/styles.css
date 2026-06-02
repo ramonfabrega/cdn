@@ -151,6 +151,7 @@ header {
   background: var(--panel2);
 }
 .sitem {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -181,6 +182,37 @@ header {
   margin-left: auto;
   font: 11px var(--mono);
   color: var(--faint);
+}
+.sitem .more {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  background: var(--hover);
+  border: 0;
+  border-radius: 5px;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.sitem:hover .more {
+  opacity: 1;
+  color: var(--dim);
+}
+.sitem .more:hover {
+  color: var(--ink);
+}
+.sitem.removing {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
 }
 
 .main {
@@ -278,6 +310,15 @@ header {
 .row:hover {
   background: var(--hover);
 }
+.row.removing {
+  height: 0;
+  opacity: 0;
+  overflow: hidden;
+  border-top-color: transparent;
+  transition:
+    height 0.2s ease,
+    opacity 0.15s ease;
+}
 .nm {
   display: flex;
   align-items: center;
@@ -314,7 +355,7 @@ header {
 .sz {
   text-align: right;
 }
-.more {
+.row .more {
   justify-self: end;
   width: 26px;
   height: 24px;
@@ -328,7 +369,7 @@ header {
   font-size: 15px;
   line-height: 1;
 }
-.more:hover,
+.row .more:hover,
 .row:hover .more {
   color: var(--ink);
   background: var(--panel2);
@@ -434,7 +475,7 @@ header {
   top: 0;
   right: 0;
   height: 100dvh;
-  width: min(480px, 96vw);
+  width: min(900px, 94vw);
   z-index: 50;
   background: var(--panel);
   border-left: 1px solid var(--line2);
@@ -561,21 +602,27 @@ header {
 .sheet {
   position: fixed;
   left: 50%;
-  bottom: 0;
-  transform: translate(-50%, 100%);
-  width: min(520px, 100vw);
+  top: 50%;
+  width: min(440px, 92vw);
   z-index: 60;
   background: var(--panel);
   border: 1px solid var(--line2);
-  border-bottom: 0;
-  border-radius: 14px 14px 0 0;
-  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  max-height: 82vh;
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%) scale(0.97);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    transform 0.16s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.16s;
+  max-height: 84vh;
   display: flex;
   flex-direction: column;
 }
 .sheet.show {
-  transform: translate(-50%, 0);
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+  pointer-events: auto;
 }
 .sh {
   display: flex;
@@ -725,6 +772,9 @@ header {
   }
   .rail.open {
     transform: none;
+  }
+  .sitem .more {
+    opacity: 1;
   }
   .railbtn {
     display: inline-flex;

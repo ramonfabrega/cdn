@@ -97,11 +97,13 @@ function railItems() {
 }
 
 // ── data ──
-async function load() {
-  listEl.innerHTML = Array.from(
-    { length: 8 },
-    (_, i) => `<div class="skel"><span style="width:${30 + ((i * 13) % 45)}%"></span></div>`
-  ).join("");
+async function load(silent = false) {
+  if (!silent) {
+    listEl.innerHTML = Array.from(
+      { length: 8 },
+      (_, i) => `<div class="skel"><span style="width:${30 + ((i * 13) % 45)}%"></span></div>`
+    ).join("");
+  }
   try {
     const res = await fetch("/api/tree");
     const data = await res.json();
@@ -111,7 +113,6 @@ async function load() {
     listEl.innerHTML = `<div class="state">Error: ${esc(e.message)}</div>`;
     return;
   }
-  if (scope && scope !== "__root__" && !railItems().some((it) => it.scope === scope)) scope = null;
   render();
 }
 async function mutate(url, payload, okMsg) {
@@ -124,7 +125,7 @@ async function mutate(url, payload, okMsg) {
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || res.status);
     closeSheet();
-    await load();
+    await load(true);
     toast(okMsg);
   } catch (e) {
     toast(`Error: ${e.message}`);
@@ -153,7 +154,22 @@ function visible() {
 
 // ── render ──
 const arr = (c) => (sort.col === c ? (sort.dir > 0 ? "▲" : "▼") : "");
+// if the scoped folder vanished (e.g. you deleted it), climb to the nearest existing ancestor, else All
+function validateScope() {
+  if (scope === null || scope === "__root__") return;
+  const prefixes = allPrefixes();
+  let s = scope;
+  while (s && !prefixes.includes(s)) {
+    s = s.replace(/[^/]+\/$/, "");
+    if (!s) {
+      s = null;
+      break;
+    }
+  }
+  scope = s;
+}
 function render() {
+  validateScope();
   renderRail();
   renderList();
 }
@@ -162,8 +178,12 @@ function renderRail() {
     .map((it) => {
       const sc = it.scope === null ? "__all__" : it.scope;
       const on = scope === it.scope || (it.scope === null && scope === null);
+      const isFolder = it.scope !== null && it.scope !== "__root__";
       const ico = it.scope === null ? "🗂" : "📁";
-      return `<div class="sitem${on ? " on" : ""}" data-scope="${esc(sc)}" style="padding-left:${10 + it.depth * 14}px"><span class="ico">${ico}</span><span class="lbl">${esc(it.label)}</span><span class="n">${countFor(it.scope)}</span></div>`;
+      const more = isFolder
+        ? `<button type="button" class="more" data-fmore aria-label="folder actions">⋯</button>`
+        : "";
+      return `<div class="sitem${on ? " on" : ""}" data-scope="${esc(sc)}" style="padding-left:${10 + it.depth * 14}px"><span class="ico">${ico}</span><span class="lbl">${esc(it.label)}</span><span class="n">${countFor(it.scope)}</span>${more}</div>`;
     })
     .join("");
 }
@@ -202,11 +222,24 @@ function renderList() {
 
 // ── rail + list events ──
 railEl.addEventListener("click", (e) => {
+  const fmore = e.target.closest("[data-fmore]");
+  if (fmore) {
+    e.stopPropagation();
+    const r = fmore.getBoundingClientRect();
+    openMenu(fmore.closest(".sitem").dataset.scope, r.right, r.bottom, true);
+    return;
+  }
   const it = e.target.closest(".sitem");
   if (!it) return;
   scope = it.dataset.scope === "__all__" ? null : it.dataset.scope;
   closeRail();
   render();
+});
+railEl.addEventListener("contextmenu", (e) => {
+  const it = e.target.closest(".sitem");
+  if (!it || it.dataset.scope === "__all__" || it.dataset.scope === "__root__") return;
+  e.preventDefault();
+  openMenu(it.dataset.scope, e.clientX, e.clientY, true);
 });
 listEl.addEventListener("click", (e) => {
   const sortEl = e.target.closest("[data-sort]");
@@ -237,9 +270,12 @@ listEl.addEventListener("contextmenu", (e) => {
 });
 
 // ── context menu ──
-function openMenu(key, x, y) {
-  menu.innerHTML = `
-    <button type="button" data-act="copy">Copy link</button>
+function openMenu(key, x, y, isFolder = false) {
+  menu.innerHTML = isFolder
+    ? `<button type="button" data-act="move">Move…</button>
+    <button type="button" data-act="rename">Rename…</button>
+    <button type="button" class="del" data-act="delete">Delete</button>`
+    : `<button type="button" data-act="copy">Copy link</button>
     <button type="button" data-act="open">Open ↗</button>
     <hr>
     <button type="button" data-act="move">Move…</button>
@@ -262,6 +298,7 @@ function closeMenu() {
 }
 function doAct(action, key) {
   const o = byKey(key);
+  if ((action === "copy" || action === "open") && !o) return;
   if (action === "copy") {
     navigator.clipboard.writeText(o.url);
     toast("Link copied");
@@ -282,20 +319,22 @@ function closeSheet() {
   sheetScrim.classList.remove("show");
 }
 function openMove(key) {
-  const cur = key.slice(0, key.lastIndexOf("/") + 1);
+  const isFolder = key.endsWith("/");
+  const stripped = key.replace(/\/$/, "");
+  const cur = stripped.includes("/") ? `${stripped.slice(0, stripped.lastIndexOf("/"))}/` : "";
   sbody.innerHTML = allPrefixes()
-    .map(
-      (p) =>
-        `<div class="pick${p === cur ? " disabled" : ""}" data-to="${esc(p)}">📁 ${esc(p || "root")}</div>`
-    )
+    .map((p) => {
+      const bad = p === cur || (isFolder && (p === key || p.startsWith(key)));
+      return `<div class="pick${bad ? " disabled" : ""}" data-to="${esc(p)}">📁 ${esc(p || "root")}</div>`;
+    })
     .join("");
   sbody.querySelectorAll(".pick:not(.disabled)").forEach((el) => {
     el.addEventListener("click", () => confirmMove(key, el.dataset.to));
   });
-  openSheet(`Move “${key.split("/").pop()}” to…`);
+  openSheet(`Move “${stripped.split("/").pop()}” to…`);
 }
 function confirmMove(key, to) {
-  const name = key.split("/").pop();
+  const name = key.replace(/\/$/, "").split("/").pop();
   sbody.innerHTML = `<div class="confirm"><p>Move <b>${esc(name)}</b> → <b>${esc(to || "root")}</b>. <span class="warn">The key changes, so the public URL changes and old links break.</span></p><div class="cbtns"><button type="button" class="cancel" data-c>Cancel</button><button type="button" class="go" data-go>Move</button></div></div>`;
   sbody.querySelector("[data-c]").addEventListener("click", closeSheet);
   sbody
@@ -304,7 +343,7 @@ function confirmMove(key, to) {
   openSheet("Confirm move");
 }
 function openRename(key) {
-  const cur = key.split("/").pop();
+  const cur = key.replace(/\/$/, "").split("/").pop();
   sbody.innerHTML = `<div class="confirm"><p>Rename <b>${esc(cur)}</b></p><input id="rn" class="nfname" value="${esc(cur)}"><div class="cbtns"><button type="button" class="cancel" data-c>Cancel</button><button type="button" class="go" data-go>Rename</button></div></div>`;
   sbody.querySelector("[data-c]").addEventListener("click", closeSheet);
   const go = () => {
@@ -325,13 +364,35 @@ function openRename(key) {
   }, 50);
 }
 function openDelete(key) {
-  const name = key.split("/").pop();
+  const name = key.replace(/\/$/, "").split("/").pop();
   sbody.innerHTML = `<div class="confirm"><p>Delete <b>${esc(name)}</b>. <span class="warn">Gone for good — the public URL stops working.</span></p><div class="cbtns"><button type="button" class="cancel" data-c>Cancel</button><button type="button" class="danger" data-go>Delete</button></div></div>`;
   sbody.querySelector("[data-c]").addEventListener("click", closeSheet);
-  sbody
-    .querySelector("[data-go]")
-    .addEventListener("click", () => mutate("/api/delete", { key }, `Deleted “${name}”`));
+  sbody.querySelector("[data-go]").addEventListener("click", () => doDelete(key, name));
   openSheet("Confirm delete");
+}
+// optimistic delete: animate the row (or rail folder) out, sync in the background
+async function doDelete(key, name) {
+  closeSheet();
+  const el =
+    [...listEl.querySelectorAll(".row")].find((r) => r.dataset.key === key) ||
+    [...railEl.querySelectorAll(".sitem")].find((s) => s.dataset.scope === key);
+  if (el) el.classList.add("removing");
+  try {
+    const res = await fetch("/api/delete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.error || res.status);
+    objects = objects.filter((o) => o.key !== key && !(key.endsWith("/") && o.key.startsWith(key)));
+    if (el) setTimeout(render, 200);
+    else render();
+    toast(`Deleted “${name}”`);
+  } catch (e) {
+    if (el) el.classList.remove("removing");
+    toast(`Error: ${e.message}`);
+  }
 }
 $("#newfld").addEventListener("click", () => {
   const prefix = scope === null || scope === "__root__" ? "" : scope;
@@ -396,9 +457,22 @@ qEl.addEventListener("input", () => {
 pscrim.addEventListener("click", closePreview);
 sheetScrim.addEventListener("click", closeSheet);
 $("#sheetx").addEventListener("click", closeSheet);
-document.addEventListener("click", (e) => {
-  if (!e.target.closest("#menu") && !e.target.closest("[data-more]")) closeMenu();
-});
+// capture phase: while the menu is open, the first outside click only dismisses it
+// (don't let it fall through to a row/preview). Clicks on a ⋯ trigger pass through
+// so the menu can re-open on the new target.
+document.addEventListener(
+  "click",
+  (e) => {
+    if (!menu.classList.contains("show")) return;
+    if (e.target.closest("#menu")) return;
+    closeMenu();
+    if (!e.target.closest("[data-more], [data-fmore]")) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+  },
+  true
+);
 window.addEventListener("scroll", closeMenu, true);
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === "k") {
