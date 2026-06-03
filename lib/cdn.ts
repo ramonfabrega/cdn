@@ -5,10 +5,17 @@
 // which exist in both Bun and Cloudflare Workers. This keeps `bin/share`
 // zero-install and lets the same lib survive the Bun -> Worker promotion.
 
-import { extname } from "node:path";
-
 export const DOMAIN = "cdn.ramonfabrega.com";
 export const BUCKET = "cdn";
+
+/** Lowercased extension of a path incl. the dot (".png"), or "" — matches node's
+    extname (leading-dot files like ".keep" have no extension). Inlined so this
+    file stays dependency-free and runs unchanged on Bun and Workers. */
+function extname(path: string): string {
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot) : "";
+}
 
 /** Extension -> MIME type. Anything not here falls back to octet-stream. */
 export const MIME_TYPES: Record<string, string> = {

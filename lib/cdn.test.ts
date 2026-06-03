@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 
 import { categoryForExt, classify, humanSize, mimeFor, publicUrl, randomKey } from "./cdn.ts";
 

@@ -81,6 +81,10 @@ kbd {
   border-radius: 4px;
   padding: 1px 5px;
 }
+/* inline svg icons — base sizing; color comes from the element (currentColor) */
+.ico {
+  flex: none;
+}
 
 /* ── header ── */
 header {
@@ -198,9 +202,6 @@ header {
 .sitem.on {
   background: var(--hover);
   color: var(--ink);
-}
-.ico {
-  flex: none;
 }
 .sitem .ico {
   opacity: 0.8;

@@ -1,6 +1,9 @@
 {
+  // Worker side: Hono Worker + storage + pure lib + tests. Types come from
+  // wrangler types (worker-configuration.d.ts) — NOT @types/bun. The Bun `share`
+  // CLI + r2-client live under tsconfig.cli.json with Bun types instead.
   "compilerOptions": {
-    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "lib": ["ESNext"],
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
@@ -9,11 +12,19 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "allowJs": false,
-    "types": ["bun"],
+    "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-pool-workers/types"],
     "strict": true,
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": false
   },
-  "include": ["**/*.ts"],
+  "include": [
+    "worker.ts",
+    "storage.ts",
+    "*.test.ts",
+    "lib/**/*.ts",
+    "worker-configuration.d.ts",
+    "test-env.d.ts",
+    "vitest.config.ts"
+  ],
   "exclude": ["node_modules"]
 }

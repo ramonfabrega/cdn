@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "cdn-explorer",
+  "main": "worker.ts",
+  "compatibility_date": "2026-06-02",
+  "observability": { "enabled": true },
+
+  // R2 binding → env.BUCKET (the same bucket the `share` CLI writes to).
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "cdn" }],
+
+  // Static UI lives in public/. run_worker_first=true means the Worker runs for
+  // EVERY request, so the password gate covers the assets too; the Worker reads
+  // index.html/styles.css/app.js via env.ASSETS and serves them as one inlined doc.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  }
+
+  // Secrets (set with `wrangler secret put`, or .dev.vars locally):
+  //   CDN_PASSWORD, CDN_SESSION_SECRET
+  //
+  // Custom domain — add once DNS for the host is on this Cloudflare account:
+  //   "routes": [{ "pattern": "files.ramonfabrega.com", "custom_domain": true }]
+}

@@ -49,7 +49,7 @@
       const el = (id) => document.getElementById(id);
       const bar = (w) => `<span class="shimmer" style="width:${w}"></span>`;
       const cell = (cls) => `<span class="shimmer ${cls}"></span>`;
-      el("rail").innerHTML = [68, 50, 60, 42, 64, 38].map((w) => `<div class="skel-r">${bar(w + "%")}</div>`).join("");
+      el("rail").innerHTML = [68, 50, 60, 42, 64, 38].map((w) => `<div class="skel-r">${bar(`${w}%`)}</div>`).join("");
       el("scope").textContent = "All files"; // default scope is known up front; only the count is unknown
       el("count").innerHTML = `<span class="skel-txt shimmer" style="width:22px"></span> files`;
       const head =
@@ -57,7 +57,7 @@
         '<span class="ralign">Size</span><span class="dtcol">Modified</span><span></span></div>';
       const skel = (w) => `<div class="skel">${bar(w)}${cell("typecol s-badge")}${cell("s-sz")}${cell("dtcol s-dt")}</div>`;
       const rows = Math.max(8, Math.ceil((innerHeight - 150) / 44));
-      el("list").innerHTML = head + Array.from({ length: rows }, (_, i) => skel(30 + ((i * 13) % 45) + "%")).join("");
+      el("list").innerHTML = head + Array.from({ length: rows }, (_, i) => skel(`${30 + ((i * 13) % 45)}%`)).join("");
     })();
   </script>
   <script type="module" src="/app.js"></script>
