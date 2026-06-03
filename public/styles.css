@@ -289,7 +289,8 @@ header {
   scrollbar-gutter: stable; /* reserve the bar so first fill doesn't shift content */
 }
 .hd,
-.row {
+.row,
+.skel {
   display: grid;
   grid-template-columns: 1fr 76px 78px 116px 30px;
   align-items: center;
@@ -413,17 +414,27 @@ header {
   background-size: 400% 100%;
   animation: sh 1.3s ease infinite;
 }
+/* .skel is a grid (shares the .hd/.row rule above): one shimmer per column so the
+   columns line up during load and each cell's content swaps in place — no pop-in. */
 .skel {
   height: 44px;
   border-top: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  padding: 0 16px;
 }
 .skel span,
 .skel-r span {
   height: 10px;
   border-radius: 5px;
+}
+.skel .s-badge {
+  width: 36px;
+  height: 18px;
+}
+.skel .s-sz {
+  width: 32px;
+  justify-self: end;
+}
+.skel .s-dt {
+  width: 84px;
 }
 .skel-r {
   height: 33px;
@@ -825,14 +836,17 @@ header {
     display: none;
   }
   .hd,
-  .row {
+  .row,
+  .skel {
     grid-template-columns: 1fr 64px 30px;
     gap: 8px;
   }
   .hd .typecol,
   .row .typecol,
+  .skel .typecol,
   .hd .dtcol,
-  .row .dtcol {
+  .row .dtcol,
+  .skel .dtcol {
     display: none;
   }
 }
