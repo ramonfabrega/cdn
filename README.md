@@ -62,7 +62,7 @@ bun run deploy
 - Secrets are one-time (after the first deploy, which must exist before secrets can be set):
   `wrangler secret put CDN_PASSWORD` / `CDN_SESSION_SECRET` / `CDN_UPLOAD_TOKEN`. The upload token
   is the `share` CLI's only credential — store the same value in `passage` at
-  `tokens/cloudflare/personal/cdn-upload-token`.
+  `tokens/cdn/upload-token` (filed by app, not provider — it's a bearer we issue, not a CF cred).
 - Adding the route disabled the `*.workers.dev` URL — add `"workers_dev": true` to keep a staging URL.
 
 ## Conventions
