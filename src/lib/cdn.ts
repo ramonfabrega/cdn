@@ -1,16 +1,15 @@
-// Pure helpers shared by the `share` CLI and the cdn explorer.
-//
-// HARD RULE: zero external deps and no runtime-specific imports here
-// (no `import "bun"`, no Worker APIs). Only Node stdlib + global Web APIs,
-// which exist in both Bun and Cloudflare Workers. This keeps `bin/share`
-// zero-install and lets the same lib survive the Bun -> Worker promotion.
+// Pure, dependency-free helpers for the cdn Worker: key → MIME content-typing and
+// key → { ext, category } classification (the explorer's badges + the content-type
+// stored on upload). No external deps, no runtime-specific APIs — just string ops —
+// so it's trivially testable and keeps the Worker bundle lean. The `share` CLI used
+// to import from here; it now owns its own tiny helpers, so this module is
+// Worker-internal.
 
 export const DOMAIN = "cdn.ramonfabrega.com";
-export const BUCKET = "cdn";
 
 /** Lowercased extension of a path incl. the dot (".png"), or "" — matches node's
-    extname (leading-dot files like ".keep" have no extension). Inlined so this
-    file stays dependency-free and runs unchanged on Bun and Workers. */
+    extname (leading-dot files like ".keep" have no extension). Inlined to keep
+    this module dependency-free. */
 function extname(path: string): string {
   const base = path.slice(path.lastIndexOf("/") + 1);
   const dot = base.lastIndexOf(".");
@@ -43,30 +42,12 @@ export function mimeFor(path: string): string {
   return MIME_TYPES[extname(path).toLowerCase()] ?? "application/octet-stream";
 }
 
-/** A short random object key, e.g. "a1b2c3". */
-export function randomKey(len = 6): string {
-  return crypto.randomUUID().replaceAll("-", "").slice(0, len);
-}
-
 /** Public URL for an object key. */
 export function publicUrl(key: string): string {
   return `https://${DOMAIN}/${key.replace(/^\//, "")}`;
 }
 
-/** Human-readable byte size, e.g. 1536 -> "1.5 KB". */
-export function humanSize(bytes: number): string {
-  if (!Number.isFinite(bytes)) return "—";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let n = bytes;
-  let u = 0;
-  while (n >= 1024 && u < units.length - 1) {
-    n /= 1024;
-    u++;
-  }
-  return `${u === 0 ? n : n.toFixed(1)} ${units[u]}`;
-}
-
-// ── type classification (shared by explorer badges + CLI) ──────────────────
+// ── type classification (drives the explorer's badges) ──────────────────────
 
 /** ext -> visual category (drives badge color in the UI). */
 const CATEGORY_EXTS: Record<string, string[]> = {

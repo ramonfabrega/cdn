@@ -1,8 +1,8 @@
 {
-  // Worker side: Hono Worker + storage + pure lib + tests. Types come from
-  // wrangler types (worker-configuration.d.ts) — NOT @types/bun. The Bun `share`
-  // CLI (bin/share) is `@ts-nocheck` and shares only the pure lib/cdn.ts, so it
-  // needs no tsconfig of its own.
+  // Worker side: the whole app lives under src/ (Hono Worker + storage + pure lib
+  // + tests). Types come from wrangler types (worker-configuration.d.ts) — NOT
+  // @types/bun. The Bun `share` CLI (bin/share) is `@ts-nocheck` and fully
+  // self-contained — it imports nothing from cdn — so it needs no tsconfig.
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",
@@ -18,14 +18,6 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": false
   },
-  "include": [
-    "worker.ts",
-    "storage.ts",
-    "*.test.ts",
-    "lib/**/*.ts",
-    "worker-configuration.d.ts",
-    "test-env.d.ts",
-    "vitest.config.ts"
-  ],
+  "include": ["src/**/*.ts", "worker-configuration.d.ts", "vitest.config.ts"],
   "exclude": ["node_modules"]
 }

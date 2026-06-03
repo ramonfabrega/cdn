@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { categoryForExt, classify, humanSize, mimeFor, publicUrl, randomKey } from "./cdn.ts";
+import { categoryForExt, classify, mimeFor, publicUrl } from "./cdn.ts";
 
 describe("classify", () => {
   test("by extension", () => {
@@ -41,23 +41,5 @@ describe("publicUrl", () => {
   test("builds CDN url and strips a leading slash", () => {
     expect(publicUrl("a/b.png")).toBe("https://cdn.ramonfabrega.com/a/b.png");
     expect(publicUrl("/a.png")).toBe("https://cdn.ramonfabrega.com/a.png");
-  });
-});
-
-describe("humanSize", () => {
-  test("formats bytes", () => {
-    expect(humanSize(0)).toBe("0 B");
-    expect(humanSize(512)).toBe("512 B");
-    expect(humanSize(1536)).toBe("1.5 KB");
-    expect(humanSize(5 * 1024 * 1024)).toBe("5.0 MB");
-  });
-});
-
-describe("randomKey", () => {
-  test("6 lowercase hex chars, no dashes", () => {
-    expect(randomKey()).toMatch(/^[0-9a-f]{6}$/);
-  });
-  test("custom length", () => {
-    expect(randomKey(10)).toMatch(/^[0-9a-f]{10}$/);
   });
 });
