@@ -18,17 +18,55 @@
     <button type="button" class="signout" onclick="location.href='/logout'">Sign out</button>
   </header>
 
+  <!-- The loading skeleton (rail rows + list rows below) is STATIC HTML on purpose:
+       it must paint in the same frame as the shell. Do NOT move it back to a JS build
+       step — doing so reintroduces a "shell, then skeleton, then data" 3-paint flash
+       (any layout read like offsetWidth makes it worse). app.js overwrites #rail/#list
+       with real data on load. "All files" is real (only its count shimmers); folder
+       rows + list rows are placeholders sized to the loaded UI. -->
   <div class="body">
-    <nav class="rail" id="rail"></nav>
+    <nav class="rail" id="rail">
+      <div class="sitem on" style="padding-left:10px"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z"/><path d="M2 8v11a2 2 0 0 0 2 2h14"/></svg><span class="lbl">All files</span><span class="n shimmer s-cnt"></span></div>
+      <div class="sitem" style="padding-left:10px"><span class="ico shimmer s-sq"></span><span class="shimmer s-lbl" style="width:46px"></span><span class="n shimmer s-cnt"></span></div>
+      <div class="sitem" style="padding-left:10px"><span class="ico shimmer s-sq"></span><span class="shimmer s-lbl" style="width:52px"></span><span class="n shimmer s-cnt"></span></div>
+      <div class="sitem" style="padding-left:24px"><span class="ico shimmer s-sq"></span><span class="shimmer s-lbl" style="width:40px"></span><span class="n shimmer s-cnt"></span></div>
+      <div class="sitem" style="padding-left:24px"><span class="ico shimmer s-sq"></span><span class="shimmer s-lbl" style="width:56px"></span><span class="n shimmer s-cnt"></span></div>
+      <div class="sitem" style="padding-left:24px"><span class="ico shimmer s-sq"></span><span class="shimmer s-lbl" style="width:80px"></span><span class="n shimmer s-cnt"></span></div>
+      <div class="sitem" style="padding-left:10px"><span class="ico shimmer s-sq"></span><span class="shimmer s-lbl" style="width:56px"></span><span class="n shimmer s-cnt"></span></div>
+      <div class="sitem" style="padding-left:24px"><span class="ico shimmer s-sq"></span><span class="shimmer s-lbl" style="width:64px"></span><span class="n shimmer s-cnt"></span></div>
+      <div class="sitem" style="padding-left:10px"><span class="ico shimmer s-sq"></span><span class="shimmer s-lbl" style="width:40px"></span><span class="n shimmer s-cnt"></span></div>
+    </nav>
     <main class="main">
       <div class="mainbar">
-        <span class="scope" id="scope"></span>
-        <span class="count" id="count"></span>
+        <span class="scope" id="scope">All files</span>
+        <span class="count" id="count"><span class="skel-txt shimmer" style="width:22px"></span> files</span>
         <button type="button" class="mbtn" id="upload"><svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>upload</button>
         <button type="button" class="mbtn" id="newfld"><svg class="ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14"/><path d="M12 5v14"/></svg>folder</button>
       </div>
       <input type="file" id="fileinput" multiple hidden>
-      <div class="list" id="list"></div>
+      <div class="list" id="list">
+      <div class="hd"><span>Name <i class="ar">▲</i></span><span class="typecol">Type</span><span class="ralign">Size</span><span class="dtcol">Modified</span><span></span></div>
+      <div class="skel"><span class="shimmer" style="width:30%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:43%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:56%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:69%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:37%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:50%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:63%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:31%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:44%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:57%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:70%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:38%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:51%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:64%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:32%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:45%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:58%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:71%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:39%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+      <div class="skel"><span class="shimmer" style="width:52%"></span><span class="shimmer typecol s-badge"></span><span class="shimmer s-sz"></span><span class="shimmer dtcol s-dt"></span><button type="button" class="more">⋯</button></div>
+    </div>
       <div class="dropzone" id="dropzone">
         <div class="dz-inner">
           <svg class="ico" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
@@ -49,25 +87,6 @@
   <div class="menu" id="menu"></div>
   <div class="toast" id="toast"></div>
 
-  <script>
-    // First-paint skeleton — rendered synchronously here (this runs during parse,
-    // before the deferred module below), so the very first paint is the loading
-    // state, never an empty styled shell. app.js then swaps in the real rail + rows.
-    (() => {
-      const el = (id) => document.getElementById(id);
-      const bar = (w) => `<span class="shimmer" style="width:${w}"></span>`;
-      const cell = (cls) => `<span class="shimmer ${cls}"></span>`;
-      el("rail").innerHTML = [68, 50, 60, 42, 64, 38].map((w) => `<div class="skel-r">${bar(`${w}%`)}</div>`).join("");
-      el("scope").textContent = "All files"; // default scope is known up front; only the count is unknown
-      el("count").innerHTML = `<span class="skel-txt shimmer" style="width:22px"></span> files`;
-      const head =
-        '<div class="hd"><span>Name <i class="ar">▲</i></span><span class="typecol">Type</span>' +
-        '<span class="ralign">Size</span><span class="dtcol">Modified</span><span></span></div>';
-      const skel = (w) => `<div class="skel">${bar(w)}${cell("typecol s-badge")}${cell("s-sz")}${cell("dtcol s-dt")}<button type="button" class="more">⋯</button></div>`;
-      const rows = Math.max(8, Math.ceil((innerHeight - 150) / 44));
-      el("list").innerHTML = head + Array.from({ length: rows }, (_, i) => skel(`${30 + ((i * 13) % 45)}%`)).join("");
-    })();
-  </script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

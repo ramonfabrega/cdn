@@ -449,7 +449,7 @@ header {
   font-size: 13px;
 }
 
-/* skeleton — shared shimmer for list rows (.skel) + rail items (.skel-r).
+/* skeleton — shimmer placeholders for list rows (.skel) + rail rows (reused .sitem).
    base = --line so the bar reads on both surfaces it sits on (--bg list, --well rail). */
 .shimmer {
   background: linear-gradient(90deg, var(--line) 25%, var(--line2) 37%, var(--line) 63%);
@@ -463,8 +463,7 @@ header {
   border-top: 1px solid var(--line);
   font: 13px var(--mono); /* identical context to .row so the ⋯ lands in the same spot */
 }
-.skel span,
-.skel-r span {
+.skel span {
   height: 10px;
   border-radius: 5px;
 }
@@ -478,15 +477,21 @@ header {
 .skel .s-dt {
   width: 101px; /* the real Modified text width ("Jun 2 04:53 PM" in the mono font) */
 }
-.skel-r {
-  height: 28px; /* matches the real .sitem rail row */
-  display: flex;
-  align-items: center;
-  padding: 0 10px;
-  margin: 2px 0;
+/* rail skeleton: placeholders inside reused .sitem rows, so the box + depth indent
+   + icon slot + count slot all match the loaded rail; only the label width varies. */
+.rail .s-sq {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
 }
-.skel-r span {
+.rail .s-lbl {
   height: 9px;
+  border-radius: 5px;
+}
+.rail .s-cnt {
+  width: 13px;
+  height: 9px;
+  border-radius: 5px;
 }
 .skel-txt {
   display: inline-block;
