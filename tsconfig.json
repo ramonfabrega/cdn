@@ -1,7 +1,8 @@
 {
   // Worker side: Hono Worker + storage + pure lib + tests. Types come from
   // wrangler types (worker-configuration.d.ts) — NOT @types/bun. The Bun `share`
-  // CLI + r2-client live under tsconfig.cli.json with Bun types instead.
+  // CLI (bin/share) is `@ts-nocheck` and shares only the pure lib/cdn.ts, so it
+  // needs no tsconfig of its own.
   "compilerOptions": {
     "lib": ["ESNext"],
     "target": "ESNext",

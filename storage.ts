@@ -2,8 +2,9 @@
 // (`env.BUCKET`, an R2Bucket) — no S3 client, no `passage`, no Bun.
 //
 // Every op takes the bucket explicitly because on a Worker the binding lives on
-// the per-request `env`, not a module global. `lib/cdn.ts` stays pure (the
-// `share` CLI still uses the Bun S3 client in r2-client.ts; this file does not).
+// the per-request `env`, not a module global. `lib/cdn.ts` stays pure so the
+// `share` CLI can share it; the CLI uploads through the Worker (POST /api/upload),
+// so there's no S3 client anywhere anymore.
 
 import { classify, mimeFor, publicUrl } from "./lib/cdn.ts";
 

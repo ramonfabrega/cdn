@@ -1,9 +1,10 @@
 // cdn explorer — a thin Hono Worker that lists the R2 bucket behind a password.
 //
 // Runs on Cloudflare Workers. R2 is reached through the `BUCKET` binding, the
-// password/secret come from `env` (wrangler secrets / .dev.vars), and the static
-// UI is read from the `ASSETS` binding. No Bun, no S3 client, no `passage` —
-// those live only in the local `share` CLI (bin/share → r2-client.ts).
+// password/secrets come from `env` (wrangler secrets / .dev.vars), and the static
+// UI is read from the `ASSETS` binding. No Bun, no S3 client, no `passage`. The
+// `share` CLI (bin/share) writes through POST /api/upload here, not S3 — so the
+// CDN owns every R2 write, and the CLI's only credential is the upload bearer.
 //
 //   bun run dev      # wrangler dev — local R2 sim + .dev.vars
 //   bun run deploy   # wrangler deploy
@@ -14,7 +15,7 @@
 import { Hono } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 
-import { DOMAIN } from "./lib/cdn.ts";
+import { DOMAIN, mimeFor, publicUrl } from "./lib/cdn.ts";
 import { createFolder, move, remove, rename, tree } from "./storage.ts";
 
 const COOKIE = "cdn_session";
@@ -27,6 +28,13 @@ const isAdminPath = (path: string) => path === "/" || path.startsWith("/api/");
 // default. Local dev supplies CDN_PASSWORD + CDN_SESSION_SECRET via .dev.vars.
 const sessionSecret = (env: Env) =>
   env.CDN_SESSION_SECRET || `${env.CDN_PASSWORD ?? ""}::cdn-explorer-session`;
+
+// The `share` CLI can't run the cookie login flow, so uploads accept a bearer
+// token instead. Scoped to POST /api/upload only (see the gate) and fails CLOSED
+// — no CDN_UPLOAD_TOKEN configured ⇒ every bearer is rejected. Distinct from
+// CDN_PASSWORD: a high-entropy machine token that can't reach the destructive APIs.
+const bearerOk = (env: Env, auth?: string) =>
+  !!env.CDN_UPLOAD_TOKEN && auth === `Bearer ${env.CDN_UPLOAD_TOKEN}`;
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -43,6 +51,9 @@ app.use("*", async (c, next) => {
 app.use("*", async (c, next) => {
   const path = new URL(c.req.url).pathname;
   if (!isAdminPath(path)) return next();
+  // Uploads may authenticate with the bearer token (the `share` CLI); everything
+  // else — the explorer + destructive APIs — requires the signed session cookie.
+  if (path === "/api/upload" && bearerOk(c.env, c.req.header("authorization"))) return next();
   const ok = await getSignedCookie(c, sessionSecret(c.env), COOKIE);
   if (ok !== "ok") {
     if (path.startsWith("/api/")) return c.json({ error: "unauthorized" }, 401);
@@ -147,6 +158,31 @@ app.post("/api/delete", async (c) => {
       }
     }
     return c.json({ ok: results.every((r) => r.ok), deleted, results });
+  } catch (e) {
+    return c.json({ error: errMsg(e) }, 400);
+  }
+});
+
+// ── upload ───────────────────────────────────────────────────────────────────
+// Authenticated write — the `share` CLI (bearer) and the explorer's drag-drop
+// (cookie) both POST here, replacing the old S3-from-the-CLI path. The client
+// chooses the key (`?key=`); key-gen stays client-side. The body is the raw file
+// bytes, streamed straight to R2 — no buffering, so large videos are fine. The
+// stored content-type comes from the key's extension (our "classify by extension"
+// rule — the client doesn't get to set it). Overwrites, like the old S3 write did.
+app.post("/api/upload", async (c) => {
+  try {
+    const key = (c.req.query("key") ?? "").replace(/^\/+/, "");
+    if (
+      !key ||
+      key.endsWith("/") ||
+      key.endsWith("/.keep") ||
+      key === ".keep" ||
+      key.includes("..")
+    )
+      throw new Error("invalid or missing 'key'");
+    await c.env.BUCKET.put(key, c.req.raw.body, { httpMetadata: { contentType: mimeFor(key) } });
+    return c.json({ ok: true, key, url: publicUrl(key) });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);
   }

@@ -1,7 +1,7 @@
 // Integration tests for the Worker's routing: public object serving (the CDN)
 // and the auth gate. Runs the real Worker (SELF) against Miniflare R2 (env.BUCKET).
 
-import { SELF, env } from "cloudflare:test";
+import { env, SELF } from "cloudflare:test";
 import { describe, expect, test } from "vitest";
 
 const BASE = "https://cdn.test";
@@ -43,6 +43,67 @@ describe("object serving (the CDN)", () => {
     await env.BUCKET.put("folder/.keep", "");
     expect((await SELF.fetch(`${BASE}/folder/.keep`)).status).toBe(404);
     expect((await SELF.fetch(`${BASE}/folder/`)).status).toBe(404);
+  });
+});
+
+describe("upload (POST /api/upload)", () => {
+  const BEARER = { authorization: "Bearer test-upload-token" }; // matches vitest.config.ts
+
+  test("writes the body to R2 and returns the public url", async () => {
+    const res = await SELF.fetch(`${BASE}/api/upload?key=up/hi.txt`, {
+      method: "POST",
+      headers: BEARER,
+      body: "hello cdn",
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      ok: true,
+      key: "up/hi.txt",
+      url: "https://cdn.ramonfabrega.com/up/hi.txt",
+    });
+    const obj = await env.BUCKET.get("up/hi.txt");
+    expect(await obj?.text()).toBe("hello cdn");
+  });
+
+  test("derives content-type from the key extension (not the request)", async () => {
+    await SELF.fetch(`${BASE}/api/upload?key=pic.png`, {
+      method: "POST",
+      headers: { ...BEARER, "content-type": "text/plain" },
+      body: new Uint8Array([1, 2, 3]),
+    });
+    const served = await SELF.fetch(`${BASE}/pic.png`);
+    expect(served.headers.get("content-type")).toBe("image/png");
+  });
+
+  test("401 without a bearer, 401 with the wrong one", async () => {
+    const none = await SELF.fetch(`${BASE}/api/upload?key=x.png`, { method: "POST", body: "x" });
+    expect(none.status).toBe(401);
+    const bad = await SELF.fetch(`${BASE}/api/upload?key=x.png`, {
+      method: "POST",
+      headers: { authorization: "Bearer nope" },
+      body: "x",
+    });
+    expect(bad.status).toBe(401);
+  });
+
+  test("rejects a missing or unsafe key", async () => {
+    for (const key of ["", "folder/", "../etc", ".keep"]) {
+      const res = await SELF.fetch(`${BASE}/api/upload?key=${encodeURIComponent(key)}`, {
+        method: "POST",
+        headers: BEARER,
+        body: "x",
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  test("the bearer is scoped to upload — it can't reach destructive APIs", async () => {
+    const res = await SELF.fetch(`${BASE}/api/delete`, {
+      method: "POST",
+      headers: { ...BEARER, "content-type": "application/json" },
+      body: JSON.stringify({ key: "anything" }),
+    });
+    expect(res.status).toBe(401);
   });
 });
 
