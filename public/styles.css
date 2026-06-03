@@ -422,7 +422,8 @@ header {
 .sz {
   text-align: right;
 }
-.row .more {
+.row .more,
+.skel .more {
   justify-self: end;
   width: 26px;
   height: 24px;
@@ -460,6 +461,7 @@ header {
 .skel {
   height: 44px;
   border-top: 1px solid var(--line);
+  font: 13px var(--mono); /* identical context to .row so the ⋯ lands in the same spot */
 }
 .skel span,
 .skel-r span {
@@ -467,18 +469,17 @@ header {
   border-radius: 5px;
 }
 .skel .s-badge {
-  width: 36px;
-  height: 18px;
+  height: 18px; /* no width → fills the 76px Type column, like the real chip */
 }
 .skel .s-sz {
   width: 32px;
   justify-self: end;
 }
 .skel .s-dt {
-  width: 84px;
+  width: 101px; /* the real Modified text width ("Jun 2 04:53 PM" in the mono font) */
 }
 .skel-r {
-  height: 33px;
+  height: 28px; /* matches the real .sitem rail row */
   display: flex;
   align-items: center;
   padding: 0 10px;

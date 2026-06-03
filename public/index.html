@@ -63,7 +63,7 @@
       const head =
         '<div class="hd"><span>Name <i class="ar">▲</i></span><span class="typecol">Type</span>' +
         '<span class="ralign">Size</span><span class="dtcol">Modified</span><span></span></div>';
-      const skel = (w) => `<div class="skel">${bar(w)}${cell("typecol s-badge")}${cell("s-sz")}${cell("dtcol s-dt")}</div>`;
+      const skel = (w) => `<div class="skel">${bar(w)}${cell("typecol s-badge")}${cell("s-sz")}${cell("dtcol s-dt")}<button type="button" class="more">⋯</button></div>`;
       const rows = Math.max(8, Math.ceil((innerHeight - 150) / 44));
       el("list").innerHTML = head + Array.from({ length: rows }, (_, i) => skel(`${30 + ((i * 13) % 45)}%`)).join("");
     })();
