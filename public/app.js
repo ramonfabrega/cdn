@@ -25,6 +25,24 @@ const COLOR = {
   file: "--t-file",
 };
 
+// inline icons (Lucide-style 24px paths; currentColor → they follow text color + theme)
+const ICONS = {
+  folders:
+    '<path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z"/><path d="M2 8v11a2 2 0 0 0 2 2h14"/>',
+  folder:
+    '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
+  link:
+    '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  move: '<path d="M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H2"/><path d="M2 13h10"/><path d="m9 16 3-3-3-3"/>',
+  rename:
+    '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
+  delete:
+    '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+};
+const icon = (n) =>
+  `<svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
+
 let objects = [];
 let q = "";
 let scope = null; // null = All files, "__root__" = root, "cuanto/" = a folder prefix
@@ -178,11 +196,11 @@ function renderRail() {
       const sc = it.scope === null ? "__all__" : it.scope;
       const on = scope === it.scope || (it.scope === null && scope === null);
       const isFolder = it.scope !== null && it.scope !== "__root__";
-      const ico = it.scope === null ? "🗂" : "📁";
+      const ico = icon(it.scope === null ? "folders" : "folder");
       const more = isFolder
         ? `<button type="button" class="more" data-fmore aria-label="folder actions">⋯</button>`
         : "";
-      return `<div class="sitem${on ? " on" : ""}" data-scope="${esc(sc)}" style="padding-left:${10 + it.depth * 14}px"><span class="ico">${ico}</span><span class="lbl">${esc(it.label)}</span><span class="n">${countFor(it.scope)}</span>${more}</div>`;
+      return `<div class="sitem${on ? " on" : ""}" data-scope="${esc(sc)}" style="padding-left:${10 + it.depth * 14}px">${ico}<span class="lbl">${esc(it.label)}</span><span class="n">${countFor(it.scope)}</span>${more}</div>`;
     })
     .join("");
 }
@@ -273,15 +291,15 @@ listEl.addEventListener("contextmenu", (e) => {
 // ── context menu ──
 function openMenu(key, x, y, isFolder = false) {
   menu.innerHTML = isFolder
-    ? `<button type="button" data-act="move">Move…</button>
-    <button type="button" data-act="rename">Rename…</button>
-    <button type="button" class="del" data-act="delete">Delete</button>`
-    : `<button type="button" data-act="copy">Copy link</button>
-    <button type="button" data-act="open">Open ↗</button>
+    ? `<button type="button" data-act="move">${icon("move")}Move…</button>
+    <button type="button" data-act="rename">${icon("rename")}Rename…</button>
+    <button type="button" class="del" data-act="delete">${icon("delete")}Delete</button>`
+    : `<button type="button" data-act="copy">${icon("link")}Copy link</button>
+    <button type="button" data-act="open">${icon("external")}Open</button>
     <hr>
-    <button type="button" data-act="move">Move…</button>
-    <button type="button" data-act="rename">Rename…</button>
-    <button type="button" class="del" data-act="delete">Delete</button>`;
+    <button type="button" data-act="move">${icon("move")}Move…</button>
+    <button type="button" data-act="rename">${icon("rename")}Rename…</button>
+    <button type="button" class="del" data-act="delete">${icon("delete")}Delete</button>`;
   menu.querySelectorAll("button").forEach((b) => {
     b.addEventListener("click", () => {
       closeMenu();
@@ -425,7 +443,7 @@ function openPreview(o) {
   const nm = o.key.split("/").pop();
   preview.innerHTML = `<div class="ph"><span class="label" title="${esc(o.key)}">${esc(nm)}</span><button type="button" class="x" id="px">×</button></div>
     <div class="pbody">${pbody}</div>
-    <div class="pfoot"><div class="url">${esc(o.url)}</div><div class="btns"><button type="button" id="pcopy">Copy link</button><a class="primary" href="${o.url}" target="_blank" rel="noopener">Open ↗</a></div></div>`;
+    <div class="pfoot"><div class="url">${esc(o.url)}</div><div class="btns"><button type="button" id="pcopy">${icon("link")}Copy link</button><a class="primary" href="${o.url}" target="_blank" rel="noopener">${icon("external")}Open</a></div></div>`;
   preview.classList.add("show");
   pscrim.classList.add("show");
   $("#px").addEventListener("click", closePreview);
