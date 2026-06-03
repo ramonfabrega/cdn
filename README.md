@@ -29,7 +29,8 @@ signing S3, so the CDN owns every write; the two share only the pure `lib/cdn.ts
   (gitignored `worker-configuration.d.ts`).
 - **`public/`** — vanilla, event-delegated, zero-build UI: `index.html` + `styles.css` + `app.js`
   (separate on disk; the Worker folds them into one response). Left **folder rail** (scope by prefix)
-  · flat sortable/searchable list · ⌘K search · `⋯`/right-click menus · centered modals · animated delete.
+  · flat sortable/searchable list · ⌘K search · `⋯`/right-click menus · centered modals · animated delete
+  · **upload** (mainbar button + drag-anywhere dropzone → `POST /api/upload`, into the current scope).
 
 ## Run locally
 
@@ -74,13 +75,11 @@ bun run deploy
 
 ## Remaining
 
-1. **Explorer upload UI** — drag-drop / button hitting `POST /api/upload` (the cookie already
-   authorizes it; the route exists). Maybe a multi-select bulk bar.
-2. **Provision + clean up secrets** — set `CDN_UPLOAD_TOKEN` on the live Worker and in `passage`
+1. **Provision + clean up secrets** — set `CDN_UPLOAD_TOKEN` on the live Worker and in `passage`
    (see Deploy), then revoke the old R2 access key in the Cloudflare dashboard and drop the three
    `passage` secrets under `tokens/cloudflare/personal/r2-cdn/` (nothing signs S3 anymore).
-3. Clear the dev fixture from the live bucket; add the prefix-scoped **30-day R2 lifecycle rule**;
-   optionally tune the object cache TTL / purge-on-delete.
+2. Clear the dev fixture from the live bucket; add the prefix-scoped **30-day R2 lifecycle rule**;
+   optionally tune the object cache TTL / purge-on-delete. Maybe a multi-select bulk bar.
 
 > A light dev fixture (~23 objects across `cuanto/ test/ dotfiles/ screenshots/` + root) is still in
 > the live bucket — clear it before calling this done.

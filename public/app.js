@@ -12,7 +12,10 @@ const railEl = $("#rail"),
   sheetTitle = $("#sheettitle"),
   menu = $("#menu"),
   toastEl = $("#toast"),
-  railScrim = $("#railScrim");
+  railScrim = $("#railScrim"),
+  fileInput = $("#fileinput"),
+  dropzone = $("#dropzone"),
+  dzText = $("#dztext");
 const COLOR = {
   image: "--t-image",
   video: "--t-video",
@@ -427,6 +430,90 @@ $("#newfld").addEventListener("click", () => {
   });
   openSheet("New folder");
   setTimeout(() => $("#nf").focus(), 50);
+});
+
+// ── upload (button + drag-drop → POST /api/upload) ──
+// Files land in the current scope (folder prefix), keeping their name; the session
+// cookie authorizes the write. Key-gen is client-side, like the CLI. Folders are
+// out of scope here (the `share` CLI handles those) — dropped dirs are skipped.
+const uploadPrefix = () => (scope === null || scope === "__root__" ? "" : scope);
+async function uploadFiles(files) {
+  const list = [...files];
+  if (!list.length) return;
+  const prefix = uploadPrefix();
+  let ok = 0;
+  for (let i = 0; i < list.length; i++) {
+    const f = list[i];
+    const key = (prefix + f.name).replace(/^\/+/, "");
+    toast(`Uploading ${i + 1}/${list.length}: ${f.name}`);
+    try {
+      const res = await fetch(`/api/upload?key=${encodeURIComponent(key)}`, {
+        method: "POST",
+        body: f,
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || res.status);
+      ok++;
+    } catch (e) {
+      toast(`Failed: ${f.name} — ${e.message}`);
+    }
+  }
+  await load();
+  toast(
+    ok === list.length
+      ? `Uploaded ${ok} file${ok === 1 ? "" : "s"}`
+      : `Uploaded ${ok}/${list.length}`
+  );
+}
+// Pull top-level files from a drop; skip directories (need the entries API to detect).
+function filesFromDrop(dt) {
+  const items = dt.items ? [...dt.items] : [];
+  if (items.length && items[0].webkitGetAsEntry) {
+    const out = [];
+    let sawDir = false;
+    for (const it of items) {
+      if (it.kind !== "file") continue;
+      if (it.webkitGetAsEntry()?.isDirectory) {
+        sawDir = true;
+        continue;
+      }
+      const f = it.getAsFile();
+      if (f) out.push(f);
+    }
+    if (sawDir) toast("Folders skipped — use the share CLI for those");
+    return out;
+  }
+  return [...dt.files];
+}
+$("#upload").addEventListener("click", () => fileInput.click());
+fileInput.addEventListener("change", () => {
+  if (fileInput.files.length) uploadFiles(fileInput.files);
+  fileInput.value = ""; // let the same file be picked again
+});
+// Drag files anywhere over the window; the overlay shows the destination scope.
+const dtHasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => {
+  if (!dtHasFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  dzText.textContent = `Drop to upload → ${uploadPrefix() || "root"}`;
+  dropzone.classList.add("show");
+});
+window.addEventListener("dragover", (e) => {
+  if (dtHasFiles(e)) e.preventDefault();
+});
+window.addEventListener("dragleave", (e) => {
+  if (!dtHasFiles(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) dropzone.classList.remove("show");
+});
+window.addEventListener("drop", (e) => {
+  if (!dtHasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  dropzone.classList.remove("show");
+  uploadFiles(filesFromDrop(e.dataTransfer));
 });
 
 // ── preview ──
