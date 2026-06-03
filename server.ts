@@ -146,16 +146,29 @@ app.post("/api/delete", async (c) => {
   }
 });
 
-// ── explorer UI + static assets ─────────────────────────────────────────────
+// ── explorer UI ─────────────────────────────────────────────────────────────
+// Serve the whole explorer as ONE self-contained document: css + js are inlined
+// into index.html so the first (and only) paint is fully styled and interactive.
+// No render-blocking subrequest ⇒ no flash of unstyled content, even on GPRS.
+// Source files stay separate on disk; we just compose them at serve time.
+// (Lifting to a Worker: read these three via text-imports instead of Bun.file.)
 const PUBLIC_DIR = `${import.meta.dir}/public`;
-app.get("/", async (c) => c.html(await Bun.file(`${PUBLIC_DIR}/index.html`).text()));
-app.get("/styles.css", async (c) => {
-  c.header("content-type", "text/css; charset=utf-8");
-  return c.body(await Bun.file(`${PUBLIC_DIR}/styles.css`).text());
-});
-app.get("/app.js", async (c) => {
-  c.header("content-type", "text/javascript; charset=utf-8");
-  return c.body(await Bun.file(`${PUBLIC_DIR}/app.js`).text());
+function inlineOnce(html: string, marker: string, replacement: string): string {
+  if (!html.includes(marker)) throw new Error(`inline marker missing: ${marker}`);
+  return html.replace(marker, () => replacement); // fn replacer: css/js contain `$`
+}
+app.get("/", async (c) => {
+  const [html, css, js] = await Promise.all([
+    Bun.file(`${PUBLIC_DIR}/index.html`).text(),
+    Bun.file(`${PUBLIC_DIR}/styles.css`).text(),
+    Bun.file(`${PUBLIC_DIR}/app.js`).text(),
+  ]);
+  const page = inlineOnce(
+    inlineOnce(html, '<link rel="stylesheet" href="/styles.css">', `<style>${css}</style>`),
+    '<script type="module" src="/app.js"></script>',
+    `<script type="module">${js}</script>`
+  );
+  return c.html(page);
 });
 
 function loginPage(error?: string): string {

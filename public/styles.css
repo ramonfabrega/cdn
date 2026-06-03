@@ -1,33 +1,57 @@
 :root {
-  color-scheme: dark;
-  --bg: #0a0b0d;
-  --panel: #111317;
-  --panel2: #0e1014;
-  --hover: #171a21;
-  --line: #21242b;
-  --line2: #2b2f38;
-  --ink: #e9ebf0;
-  --dim: #9aa3b2;
-  --faint: #626a78;
-  --accent: #5b8bff;
-  --red: #f4596b;
-  --clay: #d97757;
+  color-scheme: light dark;
+
+  /* neutral ramp — one hue (265), light-dark(light, dark). surfaces climb
+     bg → well (recessed) → card (raised float) → hover; then borders. */
+  --bg: light-dark(oklch(97.5% 0.004 265), oklch(15% 0.008 265));
+  --well: light-dark(oklch(96% 0.006 265), oklch(17.5% 0.009 265));
+  --card: light-dark(oklch(99.5% 0.002 265), oklch(19% 0.009 265));
+  --hover: light-dark(oklch(94% 0.009 265), oklch(22% 0.012 265));
+  --line: light-dark(oklch(91% 0.01 265), oklch(26% 0.013 265));
+  --line2: light-dark(oklch(86% 0.013 265), oklch(31% 0.016 265));
+  --ink: light-dark(oklch(25% 0.02 265), oklch(94% 0.008 265));
+  --dim: light-dark(oklch(45% 0.022 265), oklch(71% 0.023 265));
+  --faint: light-dark(oklch(60% 0.018 265), oklch(52% 0.022 265));
+
+  /* brand + state — single value, legible on both modes */
+  --accent: oklch(58% 0.19 265);
+  --red: oklch(62% 0.2 20);
+
+  /* text on a colored surface — fixed, never flips with theme */
+  --on-accent: oklch(100% 0 0); /* white on accent buttons */
+  --on-bright: oklch(20% 0.01 265); /* dark on bright badges + danger button */
+
+  /* overlays */
+  --scrim: light-dark(oklch(40% 0.02 265 / 0.25), oklch(8% 0.01 265 / 0.55));
+  --shadow: light-dark(oklch(50% 0.03 265 / 0.15), oklch(0% 0 0 / 0.5));
+
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
   --sans: system-ui, -apple-system, sans-serif;
-  --t-image: #a78bfa;
-  --t-video: #f472b6;
-  --t-audio: #22d3ee;
-  --t-pdf: #fb7185;
-  --t-html: #fb923c;
-  --t-code: #34d399;
-  --t-text: #60a5fa;
-  --t-archive: #fbbf24;
-  --t-file: #7c8595;
+
+  /* type badges — bright pastels carrying dark (--on-bright) text, shared by both modes */
+  --t-image: oklch(71% 0.16 294);
+  --t-video: oklch(72% 0.17 350);
+  --t-audio: oklch(80% 0.13 212);
+  --t-pdf: oklch(72% 0.17 13);
+  --t-html: oklch(76% 0.16 56);
+  --t-code: oklch(77% 0.15 163);
+  --t-text: oklch(71% 0.14 255);
+  --t-archive: oklch(84% 0.16 84);
+  --t-file: oklch(62% 0.03 265);
 }
 * {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+/* boot guard: no transitions until the first frame paints, so the overlays
+   (preview / sheet / menu / scrims) don't animate to their hidden state on load.
+   app.js drops .booting after a double rAF. animations (skeleton) are unaffected. */
+.booting *,
+.booting *::before,
+.booting *::after {
+  /* biome-ignore lint/complexity/noImportantStyles: must beat the later, equal-specificity per-element transitions during boot */
+  transition: none !important;
 }
 html,
 body {
@@ -66,7 +90,7 @@ header {
   gap: 12px;
   padding: 11px 16px;
   border-bottom: 1px solid var(--line);
-  background: var(--panel2);
+  background: var(--well);
 }
 .railbtn {
   display: none;
@@ -148,7 +172,7 @@ header {
   border-right: 1px solid var(--line);
   overflow: auto;
   padding: 8px 6px;
-  background: var(--panel2);
+  background: var(--well);
 }
 .sitem {
   position: relative;
@@ -246,7 +270,7 @@ header {
   flex: none;
   font: 12px var(--sans);
   color: var(--dim);
-  background: var(--panel2);
+  background: var(--well);
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 6px 11px;
@@ -262,6 +286,7 @@ header {
   flex: 1;
   overflow: auto;
   min-height: 0;
+  scrollbar-gutter: stable; /* reserve the bar so first fill doesn't shift content */
 }
 .hd,
 .row {
@@ -277,7 +302,7 @@ header {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--faint);
-  background: var(--panel2);
+  background: var(--well);
   border-bottom: 1px solid var(--line);
   position: sticky;
   top: 0;
@@ -334,7 +359,7 @@ header {
   color: var(--faint);
 }
 .nm .base {
-  color: #d4dae6;
+  color: var(--ink);
 }
 .badge {
   flex: none;
@@ -345,7 +370,7 @@ header {
   text-align: center;
   padding: 4px 6px;
   border-radius: 5px;
-  color: #0a0b0d;
+  color: var(--on-bright);
 }
 .sz,
 .dt {
@@ -372,7 +397,7 @@ header {
 .row .more:hover,
 .row:hover .more {
   color: var(--ink);
-  background: var(--panel2);
+  background: var(--well);
 }
 .state {
   padding: 54px 16px;
@@ -381,7 +406,13 @@ header {
   font-size: 13px;
 }
 
-/* skeleton */
+/* skeleton — shared shimmer for list rows (.skel) + rail items (.skel-r).
+   base = --line so the bar reads on both surfaces it sits on (--bg list, --well rail). */
+.shimmer {
+  background: linear-gradient(90deg, var(--line) 25%, var(--line2) 37%, var(--line) 63%);
+  background-size: 400% 100%;
+  animation: sh 1.3s ease infinite;
+}
 .skel {
   height: 44px;
   border-top: 1px solid var(--line);
@@ -389,15 +420,26 @@ header {
   align-items: center;
   padding: 0 16px;
 }
-.skel:first-child {
-  border-top: 0;
-}
-.skel span {
+.skel span,
+.skel-r span {
   height: 10px;
   border-radius: 5px;
-  background: linear-gradient(90deg, var(--panel) 25%, var(--hover) 37%, var(--panel) 63%);
-  background-size: 400% 100%;
-  animation: sh 1.3s ease infinite;
+}
+.skel-r {
+  height: 33px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  margin: 2px 0;
+}
+.skel-r span {
+  height: 9px;
+}
+.skel-txt {
+  display: inline-block;
+  height: 11px;
+  border-radius: 5px;
+  vertical-align: middle;
 }
 @keyframes sh {
   0% {
@@ -413,7 +455,7 @@ header {
   position: fixed;
   z-index: 80;
   min-width: 168px;
-  background: var(--panel);
+  background: var(--card);
   border: 1px solid var(--line2);
   border-radius: 9px;
   padding: 5px;
@@ -424,7 +466,7 @@ header {
   transition:
     opacity 0.1s,
     transform 0.1s;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  box-shadow: 0 10px 28px var(--shadow);
 }
 .menu.show {
   opacity: 1;
@@ -460,7 +502,7 @@ header {
 .pscrim {
   position: fixed;
   inset: 0;
-  background: rgba(4, 5, 7, 0.55);
+  background: var(--scrim);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s;
@@ -477,7 +519,7 @@ header {
   height: 100dvh;
   width: min(900px, 94vw);
   z-index: 50;
-  background: var(--panel);
+  background: var(--card);
   border-left: 1px solid var(--line2);
   transform: translateX(100%);
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -515,7 +557,7 @@ header {
 .pbody {
   flex: 1;
   overflow: auto;
-  background: var(--panel2);
+  background: var(--well);
   display: grid;
   place-items: center;
 }
@@ -528,7 +570,7 @@ header {
   width: 100%;
   height: 100%;
   border: 0;
-  background: #fff;
+  background: #fff; /* literal: docs (pdf/html) render on white in both themes */
 }
 .pbody .noprev {
   color: var(--faint);
@@ -553,7 +595,7 @@ header {
   font: 11px var(--mono);
   color: var(--dim);
   word-break: break-all;
-  background: var(--panel2);
+  background: var(--well);
   border: 1px solid var(--line);
   border-radius: 7px;
   padding: 7px 9px;
@@ -569,7 +611,7 @@ header {
   padding: 9px;
   border-radius: 8px;
   border: 1px solid var(--line);
-  background: var(--panel2);
+  background: var(--well);
   color: var(--dim);
   font: 13px var(--sans);
   cursor: pointer;
@@ -582,14 +624,14 @@ header {
 .pfoot .btns .primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 
 /* ── bottom sheet ── */
 .sheet-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(4, 5, 7, 0.5);
+  background: var(--scrim);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s;
@@ -605,10 +647,10 @@ header {
   top: 50%;
   width: min(440px, 92vw);
   z-index: 60;
-  background: var(--panel);
+  background: var(--card);
   border: 1px solid var(--line2);
   border-radius: 12px;
-  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 16px 48px var(--shadow);
   transform: translate(-50%, -50%) scale(0.97);
   opacity: 0;
   pointer-events: none;
@@ -702,7 +744,7 @@ header {
   border: 1px solid var(--line);
 }
 .cbtns .cancel {
-  background: var(--panel2);
+  background: var(--well);
   color: var(--dim);
 }
 .cbtns .cancel:hover {
@@ -711,13 +753,13 @@ header {
 .cbtns .danger {
   background: var(--red);
   border-color: var(--red);
-  color: #0a0b0d;
+  color: var(--on-bright);
   font-weight: 600;
 }
 .cbtns .go {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
 }
 
@@ -727,7 +769,7 @@ header {
   bottom: 24px;
   transform: translateX(-50%) translateY(16px);
   z-index: 70;
-  background: #1a1f2e;
+  background: var(--card);
   border: 1px solid var(--line2);
   color: var(--ink);
   padding: 9px 15px;
@@ -746,7 +788,7 @@ header {
 .rail-scrim {
   position: fixed;
   inset: 0;
-  background: rgba(4, 5, 7, 0.5);
+  background: var(--scrim);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s;

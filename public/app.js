@@ -97,19 +97,18 @@ function railItems() {
 }
 
 // ── data ──
-async function load(silent = false) {
-  if (!silent) {
-    listEl.innerHTML = Array.from(
-      { length: 8 },
-      (_, i) => `<div class="skel"><span style="width:${30 + ((i * 13) % 45)}%"></span></div>`
-    ).join("");
-  }
+// The boot skeleton is painted by the inline script in index.html (so it's in the
+// first paint); load() just fetches and swaps in real data — no skeleton here.
+async function load() {
   try {
     const res = await fetch("/api/tree");
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.status);
     objects = data.objects || [];
   } catch (e) {
+    railEl.innerHTML = "";
+    scopeEl.textContent = "";
+    countEl.textContent = "";
     listEl.innerHTML = `<div class="state">Error: ${esc(e.message)}</div>`;
     return;
   }
@@ -125,7 +124,7 @@ async function mutate(url, payload, okMsg) {
     const d = await res.json();
     if (!res.ok) throw new Error(d.error || res.status);
     closeSheet();
-    await load(true);
+    await load();
     toast(okMsg);
   } catch (e) {
     toast(`Error: ${e.message}`);
@@ -202,6 +201,15 @@ function rowHtml(o) {
     <button type="button" class="more" data-more aria-label="actions">⋯</button>
   </div>`;
 }
+function headHtml() {
+  return `<div class="hd">
+    <span data-sort="name">Name <i class="ar">${arr("name")}</i></span>
+    <span class="typecol" data-sort="type">Type <i class="ar">${arr("type")}</i></span>
+    <span class="ralign" data-sort="size">Size <i class="ar">${arr("size")}</i></span>
+    <span class="dtcol" data-sort="date">Modified <i class="ar">${arr("date")}</i></span>
+    <span></span>
+  </div>`;
+}
 function renderList() {
   scopeEl.textContent = scope === null ? "All files" : scope === "__root__" ? "root" : scope;
   const rows = visible();
@@ -210,14 +218,7 @@ function renderList() {
     listEl.innerHTML = `<div class="state">${q ? "No matches." : "Empty."}</div>`;
     return;
   }
-  const head = `<div class="hd">
-    <span data-sort="name">Name <i class="ar">${arr("name")}</i></span>
-    <span class="typecol" data-sort="type">Type <i class="ar">${arr("type")}</i></span>
-    <span class="ralign" data-sort="size">Size <i class="ar">${arr("size")}</i></span>
-    <span class="dtcol" data-sort="date">Modified <i class="ar">${arr("date")}</i></span>
-    <span></span>
-  </div>`;
-  listEl.innerHTML = head + rows.map(rowHtml).join("");
+  listEl.innerHTML = headHtml() + rows.map(rowHtml).join("");
 }
 
 // ── rail + list events ──
@@ -494,3 +495,9 @@ document.addEventListener("keydown", (e) => {
 });
 
 load();
+
+// re-enable transitions once the first frame has painted (the hidden overlays are
+// now settled off-screen, so they won't animate). double rAF = "after next paint".
+requestAnimationFrame(() => {
+  requestAnimationFrame(() => document.documentElement.classList.remove("booting"));
+});

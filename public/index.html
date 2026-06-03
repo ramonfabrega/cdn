@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="booting">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -41,6 +41,24 @@
   <div class="menu" id="menu"></div>
   <div class="toast" id="toast"></div>
 
+  <script>
+    // First-paint skeleton — rendered synchronously here (this runs during parse,
+    // before the deferred module below), so the very first paint is the loading
+    // state, never an empty styled shell. app.js then swaps in the real rail + rows.
+    (() => {
+      const el = (id) => document.getElementById(id);
+      const bar = (w) => `<span class="shimmer" style="width:${w}"></span>`;
+      el("rail").innerHTML = [68, 50, 60, 42, 64, 38].map((w) => `<div class="skel-r">${bar(w + "%")}</div>`).join("");
+      el("scope").innerHTML = `<span class="skel-txt shimmer" style="width:104px"></span>`;
+      el("count").innerHTML = `<span class="skel-txt shimmer" style="width:54px"></span>`;
+      const head =
+        '<div class="hd"><span>Name <i class="ar">▲</i></span><span class="typecol">Type</span>' +
+        '<span class="ralign">Size</span><span class="dtcol">Modified</span><span></span></div>';
+      const rows = Math.max(8, Math.ceil((innerHeight - 150) / 44));
+      el("list").innerHTML =
+        head + Array.from({ length: rows }, (_, i) => `<div class="skel">${bar(30 + ((i * 13) % 45) + "%")}</div>`).join("");
+    })();
+  </script>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

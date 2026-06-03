@@ -13,8 +13,10 @@ previews / prunes / re-organizes them. `share` already returns the URL, so this 
 - **`storage.ts`** — R2 ops: `tree()` (full enriched list), `createFolder`, `move`, `rename`,
   `remove`. Moves/renames are copy+delete (no native copy). Swap for an R2 binding on a Worker.
 - **`server.ts`** — Hono: password gate (signed cookie), `/api/tree` + `/api/folder|move|rename|delete`
-  (move/delete take a single key or batch `keys[]`), serves `public/` with `Cache-Control: no-store`.
-- **`public/`** — vanilla, event-delegated, zero-build UI: `index.html` + `styles.css` + `app.js`.
+  (move/delete take a single key or batch `keys[]`). `GET /` inlines css+js into one self-contained
+  document (no render-blocking subrequest → no FOUC, even on GPRS); `Cache-Control: no-store`.
+- **`public/`** — vanilla, event-delegated, zero-build UI: `index.html` + `styles.css` + `app.js`
+  (separate on disk; the server folds them into one response).
   Left **folder rail** (scope by prefix) · flat sortable/searchable list · ⌘K search ·
   per-row + rail-folder `⋯`/right-click menus · centered modals · optimistic animated delete.
 
@@ -39,7 +41,8 @@ CDN_PASSWORD=test123 PORT=4321 bun run server.ts   # http://localhost:4321
 
 ## Remaining
 
-1. UI refinement — incl. the **oklch / `light-dark()` retheme** (light mode), maybe multi-select bulk bar.
+1. UI refinement — maybe a multi-select bulk bar. (Theme done: OKLCH tokens on one hue,
+   light + dark via `light-dark()` — see the `:root` legend in `styles.css`.)
 2. **Deploy** to a Worker: `storage.ts` → R2-binding variant (`env.BUCKET`), `CDN_PASSWORD`/
    `CDN_SESSION_SECRET` → `wrangler secret`, `wrangler.jsonc` + custom domain; then the lifecycle rule.
 
