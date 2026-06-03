@@ -31,6 +31,9 @@ signing S3, so the CDN owns every write; the two share only the pure `lib/cdn.ts
   (separate on disk; the Worker folds them into one response). Left **folder rail** (scope by prefix)
   · flat sortable/searchable list · ⌘K search · `⋯`/right-click menus · centered modals · animated delete
   · **upload** (mainbar button + drag-anywhere dropzone → `POST /api/upload`, into the current scope).
+  First paint is a **static-HTML skeleton** baked into `index.html` (sized to the loaded UI) so it
+  paints in the same frame as the shell — **never built by JS** (that reintroduces a 3-paint flash);
+  `app.js` overwrites `#rail`/`#list` with real data on load.
 
 ## Run locally
 
@@ -75,11 +78,19 @@ bun run deploy
 
 ## Remaining
 
-1. **Provision + clean up secrets** — set `CDN_UPLOAD_TOKEN` on the live Worker and in `passage`
-   (see Deploy), then revoke the old R2 access key in the Cloudflare dashboard and drop the three
-   `passage` secrets under `tokens/cloudflare/personal/r2-cdn/` (nothing signs S3 anymore).
-2. Clear the dev fixture from the live bucket; add the prefix-scoped **30-day R2 lifecycle rule**;
-   optionally tune the object cache TTL / purge-on-delete. Maybe a multi-select bulk bar.
+`CDN_UPLOAD_TOKEN` is set on the live Worker + in `passage` (`tokens/cdn/upload-token`) and the
+Worker is deployed. Still to do:
 
-> A light dev fixture (~23 objects across `cuanto/ test/ dotfiles/ screenshots/` + root) is still in
-> the live bucket — clear it before calling this done.
+1. **Smoke-test the live upload** — run `bin/share <file>` against the deployed Worker once; the
+   passage → bearer → Worker → R2 path hasn't been exercised end-to-end on prod yet.
+2. **Retire the old R2 S3 keys** — once #1 passes: revoke the R2 access key in the Cloudflare
+   dashboard and drop the three `passage` secrets under `tokens/cloudflare/personal/r2-cdn/`
+   (nothing signs S3 anymore).
+3. **Merge `worktree-cdn` into the main branch** — the PATH `share` (the main checkout) still
+   signs S3 until then; it's a clean fast-forward (`git merge --ff-only worktree-cdn`).
+4. Clear the dev fixture from the live bucket (~23 objects across `cuanto/ test/ dotfiles/
+   screenshots/` + root).
+
+Bucket lifecycle is already 30-day across the board. Nice-to-haves, not blockers: prefix-scoped
+TTLs (e.g. an ephemeral `24h/` namespace), a multi-select bulk bar. Purge-on-delete: decided
+against — the ≤24h edge-cache lag on a deleted object is acceptable.
