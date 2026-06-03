@@ -21,11 +21,11 @@ const COOKIE = "cdn_session";
 const PUBLIC_PATHS = new Set(["/login", "/health"]);
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-// Read per request — on a Worker, secrets live on env, not a module global.
-// The "letmein" fallback only kicks in locally if .dev.vars is missing.
-const password = (env: Env) => env.CDN_PASSWORD || "letmein";
+// Secrets live on env (per-request), not a module global. Auth fails CLOSED:
+// with no CDN_PASSWORD configured, every login is rejected — never a baked-in
+// default. Local dev supplies CDN_PASSWORD + CDN_SESSION_SECRET via .dev.vars.
 const sessionSecret = (env: Env) =>
-  env.CDN_SESSION_SECRET || `${password(env)}::cdn-explorer-session`;
+  env.CDN_SESSION_SECRET || `${env.CDN_PASSWORD ?? ""}::cdn-explorer-session`;
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -54,7 +54,8 @@ app.get("/login", (c) => c.html(loginPage()));
 
 app.post("/login", async (c) => {
   const body = await c.req.parseBody();
-  if (body.password === password(c.env)) {
+  const pw = c.env.CDN_PASSWORD;
+  if (pw && body.password === pw) {
     await setSignedCookie(c, COOKIE, "ok", sessionSecret(c.env), {
       httpOnly: true,
       sameSite: "Lax",
