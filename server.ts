@@ -176,22 +176,39 @@ function loginPage(error?: string): string {
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>cdn · sign in</title>
 <style>
-  :root{color-scheme:light dark}
+  /* same OKLCH palette as the explorer (styles.css), light + dark via light-dark() */
+  :root{
+    color-scheme:light dark;
+    --bg:light-dark(oklch(97.5% .004 265),oklch(15% .008 265));
+    --card:light-dark(oklch(99.5% .002 265),oklch(19% .009 265));
+    --line:light-dark(oklch(91% .01 265),oklch(26% .013 265));
+    --line2:light-dark(oklch(86% .013 265),oklch(31% .016 265));
+    --ink:light-dark(oklch(25% .02 265),oklch(94% .008 265));
+    --dim:light-dark(oklch(45% .022 265),oklch(71% .023 265));
+    --faint:light-dark(oklch(60% .018 265),oklch(52% .022 265));
+    --accent:oklch(58% .19 265);
+    --on-accent:oklch(100% 0 0);
+    --red:oklch(62% .2 20);
+    --shadow:light-dark(oklch(50% .03 265/.15),oklch(0% 0 0/.5));
+  }
   *{box-sizing:border-box}
   body{margin:0;min-height:100dvh;display:grid;place-items:center;
     font:15px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif;
-    background:#0b0c0e;color:#e7e9ee}
+    background:var(--bg);color:var(--ink)}
   form{width:min(92vw,320px);display:flex;flex-direction:column;gap:14px;
-    padding:28px;border:1px solid #23262d;border-radius:16px;background:#121419}
-  h1{margin:0;font-size:15px;letter-spacing:.04em;color:#9aa3b2;font-weight:600}
-  h1 b{color:#e7e9ee;font-weight:600}
-  input{padding:11px 13px;border:1px solid #2b2f38;border-radius:10px;
-    background:#0b0c0e;color:#e7e9ee;font-size:15px;outline:none}
-  input:focus{border-color:#4c7dff}
-  button{padding:11px;border:0;border-radius:10px;background:#4c7dff;color:#fff;
-    font-size:15px;font-weight:600;cursor:pointer}
-  button:hover{background:#3d6cf0}
-  .err{color:#ff7a7a;font-size:13px;margin:0}
+    padding:28px;border:1px solid var(--line2);border-radius:16px;
+    background:var(--card);box-shadow:0 16px 48px var(--shadow)}
+  h1{margin:0;font-size:15px;letter-spacing:.04em;color:var(--dim);font-weight:600}
+  h1 b{color:var(--ink);font-weight:600}
+  input{padding:11px 13px;border:1px solid var(--line);border-radius:10px;
+    background:var(--bg);color:var(--ink);font-size:15px;outline:none}
+  input::placeholder{color:var(--faint)}
+  input:focus{border-color:var(--accent)}
+  button{padding:11px;border:0;border-radius:10px;background:var(--accent);
+    color:var(--on-accent);font-size:15px;font-weight:600;cursor:pointer;
+    transition:filter .15s}
+  button:hover{filter:brightness(1.08)}
+  .err{color:var(--red);font-size:13px;margin:0}
 </style></head><body>
 <form method="post" action="/login">
   <h1>🔒 <b>cdn</b>.ramonfabrega.com</h1>
