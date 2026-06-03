@@ -18,8 +18,9 @@ import { DOMAIN } from "./lib/cdn.ts";
 import { createFolder, move, remove, rename, tree } from "./storage.ts";
 
 const COOKIE = "cdn_session";
-const PUBLIC_PATHS = new Set(["/login", "/health"]);
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+// Only the explorer itself is gated; object paths (the CDN) + auth pages are public.
+const isAdminPath = (path: string) => path === "/" || path.startsWith("/api/");
 
 // Secrets live on env (per-request), not a module global. Auth fails CLOSED:
 // with no CDN_PASSWORD configured, every login is rejected — never a baked-in
@@ -29,16 +30,19 @@ const sessionSecret = (env: Env) =>
 
 const app = new Hono<{ Bindings: Env }>();
 
-// never let the browser cache the explorer/assets/API — fixes "reload shows stale UI"
+// Default to no-store (the explorer/API must never cache — fixes "reload shows
+// stale UI"). Object serving opts back in by setting its own Cache-Control, which
+// we leave untouched.
 app.use("*", async (c, next) => {
   await next();
-  c.header("Cache-Control", "no-store");
+  if (!c.res.headers.has("cache-control")) c.header("Cache-Control", "no-store");
 });
 
-// ── auth gate (registered first → wraps every route, incl. static assets) ────
+// ── auth gate — protects only the explorer (/ and /api/*). Object serving (the
+// CDN) and the auth pages stay public. ───────────────────────────────────────
 app.use("*", async (c, next) => {
   const path = new URL(c.req.url).pathname;
-  if (PUBLIC_PATHS.has(path)) return next();
+  if (!isAdminPath(path)) return next();
   const ok = await getSignedCookie(c, sessionSecret(c.env), COOKIE);
   if (ok !== "ok") {
     if (path.startsWith("/api/")) return c.json({ error: "unauthorized" }, 401);
@@ -174,6 +178,62 @@ app.get("/", async (c) => {
     `<script type="module">${js}</script>`
   );
   return c.html(page);
+});
+
+// Parse a Range header into absolute byte offsets, given the object size.
+function parseRange(header: string, size: number): { start: number; end: number } {
+  const m = /bytes=(\d*)-(\d*)/.exec(header);
+  const a = m?.[1] ? Number(m[1]) : Number.NaN;
+  const b = m?.[2] ? Number(m[2]) : Number.NaN;
+  if (Number.isNaN(a)) return { start: Math.max(0, size - b), end: size - 1 }; // bytes=-N (suffix)
+  return { start: a, end: Number.isNaN(b) ? size - 1 : Math.min(b, size - 1) };
+}
+
+// ── public object serving (the CDN) ──────────────────────────────────────────
+// Any path that isn't an explorer route is an R2 key. Served publicly (this is
+// what `share` links hit), with range + conditional support and an edge cache.
+// Explicit routes above win, so reserved words (/login, /api, …) never shadow a key.
+app.on(["GET", "HEAD"], "/*", async (c) => {
+  const key = decodeURIComponent(new URL(c.req.url).pathname.slice(1));
+  if (!key || key.endsWith("/") || key.endsWith("/.keep") || key === ".keep") {
+    return c.notFound();
+  }
+
+  const cache = caches.default;
+  const wantsRange = c.req.raw.headers.has("range");
+  const cacheable = c.req.method === "GET" && !wantsRange;
+  if (cacheable) {
+    const hit = await cache.match(c.req.raw);
+    if (hit) return hit;
+  }
+
+  // R2 parses Range + conditional (If-None-Match, …) straight from the headers.
+  const obj = await c.env.BUCKET.get(key, {
+    range: wantsRange ? c.req.raw.headers : undefined,
+    onlyIf: c.req.raw.headers,
+  });
+  if (!obj) return c.notFound();
+
+  const headers = new Headers();
+  obj.writeHttpMetadata(headers); // content-type & friends from stored metadata
+  headers.set("etag", obj.httpEtag);
+  headers.set("accept-ranges", "bytes");
+  headers.set("cache-control", "public, max-age=86400"); // 1 day at the edge
+
+  if (!("body" in obj)) return new Response(null, { status: 304, headers }); // onlyIf matched
+  const body = c.req.method === "HEAD" ? null : obj.body;
+
+  if (wantsRange && obj.range) {
+    const { start, end } = parseRange(c.req.raw.headers.get("range") ?? "", obj.size);
+    headers.set("content-range", `bytes ${start}-${end}/${obj.size}`);
+    headers.set("content-length", String(end - start + 1));
+    return new Response(body, { status: 206, headers });
+  }
+
+  headers.set("content-length", String(obj.size));
+  const res = new Response(body, { status: 200, headers });
+  if (cacheable) c.executionCtx.waitUntil(cache.put(c.req.raw, res.clone()));
+  return res;
 });
 
 function loginPage(error?: string): string {
