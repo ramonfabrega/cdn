@@ -15,11 +15,12 @@
     "directory": "./public",
     "binding": "ASSETS",
     "run_worker_first": true
-  }
+  },
+
+  // The Worker owns cdn.ramonfabrega.com: / = explorer, /<key> = object downloads
+  // (replaces R2's custom-domain serving). wrangler provisions the DNS + cert.
+  "routes": [{ "pattern": "cdn.ramonfabrega.com", "custom_domain": true }]
 
   // Secrets (set with `wrangler secret put`, or .dev.vars locally):
   //   CDN_PASSWORD, CDN_SESSION_SECRET
-  //
-  // Custom domain — add once DNS for the host is on this Cloudflare account:
-  //   "routes": [{ "pattern": "files.ramonfabrega.com", "custom_domain": true }]
 }
