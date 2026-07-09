@@ -42,4 +42,13 @@ describe("publicUrl", () => {
     expect(publicUrl("a/b.png")).toBe("https://cdn.ramonfabrega.com/a/b.png");
     expect(publicUrl("/a.png")).toBe("https://cdn.ramonfabrega.com/a.png");
   });
+
+  test("percent-encodes each segment but keeps slashes", () => {
+    expect(publicUrl("Screenshot 2026-07-09 at 6.15.20 PM.png")).toBe(
+      "https://cdn.ramonfabrega.com/Screenshot%202026-07-09%20at%206.15.20%E2%80%AFPM.png",
+    );
+    expect(publicUrl("dir with spaces/file#1.png")).toBe(
+      "https://cdn.ramonfabrega.com/dir%20with%20spaces/file%231.png",
+    );
+  });
 });

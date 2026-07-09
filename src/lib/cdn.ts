@@ -42,9 +42,11 @@ export function mimeFor(path: string): string {
   return MIME_TYPES[extname(path).toLowerCase()] ?? "application/octet-stream";
 }
 
-/** Public URL for an object key. */
+/** Public URL for an object key. Each path segment is percent-encoded (spaces,
+    unicode, etc.) so the URL is paste-safe; the Worker decodes on serve. */
 export function publicUrl(key: string): string {
-  return `https://${DOMAIN}/${key.replace(/^\//, "")}`;
+  const segments = key.replace(/^\//, "").split("/");
+  return `https://${DOMAIN}/${segments.map(encodeURIComponent).join("/")}`;
 }
 
 // ── type classification (drives the explorer's badges) ──────────────────────
