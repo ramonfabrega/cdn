@@ -19,7 +19,13 @@
 
   // The Worker owns cdn.ramonfabrega.com: / = explorer, /<key> = object downloads
   // (replaces R2's custom-domain serving). wrangler provisions the DNS + cert.
-  "routes": [{ "pattern": "cdn.ramonfabrega.com", "custom_domain": true }]
+  "routes": [{ "pattern": "cdn.ramonfabrega.com", "custom_domain": true }],
+
+  // Daily expiry sweep (src/storage.ts `sweep`): deletes objects >30d old unless
+  // flagged `permanent`. Replaces the bucket's blanket R2 lifecycle rule, which
+  // couldn't exempt individual objects (only the multipart-abort rule remains on
+  // the bucket itself).
+  "triggers": { "crons": ["17 6 * * *"] }
 
   // Secrets (set with `wrangler secret put`, or .dev.vars locally):
   //   CDN_PASSWORD, CDN_SESSION_SECRET

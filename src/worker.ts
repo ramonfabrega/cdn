@@ -16,10 +16,21 @@ import { Hono } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 
 import { DOMAIN, mimeFor, publicUrl } from "./lib/cdn.ts";
-import { createFolder, move, remove, rename, tree } from "./storage.ts";
+import { createFolder, move, remove, rename, setPermanent, sweep, tree } from "./storage.ts";
 
 const COOKIE = "cdn_session";
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+// Evict keys from the edge cache after a write, so an overwritten key serves the
+// new bytes immediately (the "?v2 footgun"). Cache entries are keyed by the full
+// request URL, so purge under the origin the mutation arrived on (in prod that's
+// cdn.ramonfabrega.com — the same host GETs hit). The Cache API is per-POP: this
+// clears the POP that handled the mutation — the one you're about to re-fetch
+// from — while other POPs age out via s-maxage (≤1h, see the GET handler). Capped
+// so a huge folder delete can't blow the per-request subrequest budget; beyond
+// the cap we just let s-maxage do its job.
+const purgeEdge = (origin: string, keys: string[]) =>
+  Promise.all(keys.slice(0, 100).map((k) => caches.default.delete(new Request(`${origin}/${k}`))));
 // Only the explorer itself is gated; object paths (the CDN) + auth pages are public.
 const isAdminPath = (path: string) => path === "/" || path.startsWith("/api/");
 
@@ -115,15 +126,19 @@ app.post("/api/move", async (c) => {
     const list: string[] = Array.isArray(keys) ? keys : from ? [from] : [];
     if (!list.length) throw new Error("missing 'from' or 'keys'");
     const results: { key: string; ok: boolean; error?: string }[] = [];
+    const purge: string[] = [];
     let moved = 0;
     for (const k of list) {
       try {
-        moved += await move(c.env.BUCKET, k, to);
+        const m = await move(c.env.BUCKET, k, to);
+        moved += m.count;
+        purge.push(...m.purge);
         results.push({ key: k, ok: true });
       } catch (e) {
         results.push({ key: k, ok: false, error: errMsg(e) });
       }
     }
+    await purgeEdge(new URL(c.req.url).origin, purge);
     return c.json({ ok: results.every((r) => r.ok), moved, results });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);
@@ -134,8 +149,9 @@ app.post("/api/rename", async (c) => {
   try {
     const { key, name } = await c.req.json();
     if (!key) throw new Error("missing 'key'");
-    const renamed = await rename(c.env.BUCKET, key, name);
-    return c.json({ ok: true, renamed });
+    const m = await rename(c.env.BUCKET, key, name);
+    await purgeEdge(new URL(c.req.url).origin, m.purge);
+    return c.json({ ok: true, renamed: m.count });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);
   }
@@ -148,15 +164,19 @@ app.post("/api/delete", async (c) => {
     const list: string[] = Array.isArray(keys) ? keys : key ? [key] : [];
     if (!list.length) throw new Error("missing 'key' or 'keys'");
     const results: { key: string; ok: boolean; error?: string }[] = [];
+    const purge: string[] = [];
     let deleted = 0;
     for (const k of list) {
       try {
-        deleted += await remove(c.env.BUCKET, k);
+        const m = await remove(c.env.BUCKET, k);
+        deleted += m.count;
+        purge.push(...m.purge);
         results.push({ key: k, ok: true });
       } catch (e) {
         results.push({ key: k, ok: false, error: errMsg(e) });
       }
     }
+    await purgeEdge(new URL(c.req.url).origin, purge);
     return c.json({ ok: results.every((r) => r.ok), deleted, results });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);
@@ -170,6 +190,9 @@ app.post("/api/delete", async (c) => {
 // bytes, streamed straight to R2 — no buffering, so large videos are fine. The
 // stored content-type comes from the key's extension (our "classify by extension"
 // rule — the client doesn't get to set it). Overwrites, like the old S3 write did.
+// `?permanent=1` exempts the object from the expiry sweep; when the param is
+// absent, an overwrite KEEPS the existing flag — a release script that forgets
+// --permanent must not silently re-arm the 30d expiry. Pass permanent=0 to clear.
 app.post("/api/upload", async (c) => {
   try {
     const key = (c.req.query("key") ?? "").replace(/^\/+/, "");
@@ -181,8 +204,30 @@ app.post("/api/upload", async (c) => {
       key.includes("..")
     )
       throw new Error("invalid or missing 'key'");
-    await c.env.BUCKET.put(key, c.req.raw.body, { httpMetadata: { contentType: mimeFor(key) } });
-    return c.json({ ok: true, key, url: publicUrl(key) });
+    const q = c.req.query("permanent");
+    const permanent =
+      q === undefined
+        ? (await c.env.BUCKET.head(key))?.customMetadata?.permanent === "1"
+        : ["1", "true"].includes(q);
+    await c.env.BUCKET.put(key, c.req.raw.body, {
+      httpMetadata: { contentType: mimeFor(key) },
+      customMetadata: permanent ? { permanent: "1" } : undefined,
+    });
+    await purgeEdge(new URL(c.req.url).origin, [key]); // an overwritten key must serve the new bytes immediately
+    return c.json({ ok: true, key, url: publicUrl(key), permanent });
+  } catch (e) {
+    return c.json({ error: errMsg(e) }, 400);
+  }
+});
+
+// Flip the `permanent` flag on an existing object (cookie-gated, like the other
+// mutations — the upload bearer can only set it at upload time).
+app.post("/api/permanent", async (c) => {
+  try {
+    const { key, permanent } = await c.req.json();
+    if (!key) throw new Error("missing 'key'");
+    await setPermanent(c.env.BUCKET, key, !!permanent);
+    return c.json({ ok: true, key, permanent: !!permanent });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);
   }
@@ -254,7 +299,18 @@ app.on(["GET", "HEAD"], "/*", async (c) => {
   obj.writeHttpMetadata(headers); // content-type & friends from stored metadata
   headers.set("etag", obj.httpEtag);
   headers.set("accept-ranges", "bytes");
-  headers.set("cache-control", "public, max-age=86400"); // 1 day at the edge
+  // Freshness policy. `.xml` keys are mutable pointers (mux's Sparkle appcast is
+  // overwritten in place every release) — clients must re-check within minutes,
+  // so they get a short max-age everywhere. Everything else caches a day in the
+  // client but only an hour at any single edge POP (s-maxage): purge-on-write
+  // only clears the POP that handled the write, so s-maxage bounds how long an
+  // overwritten key can serve stale bytes from every other POP.
+  headers.set(
+    "cache-control",
+    key.toLowerCase().endsWith(".xml")
+      ? "public, max-age=300"
+      : "public, max-age=86400, s-maxage=3600"
+  );
 
   if (!("body" in obj)) return new Response(null, { status: 304, headers }); // onlyIf matched
   const body = c.req.method === "HEAD" ? null : obj.body;
@@ -319,4 +375,10 @@ function loginPage(error?: string): string {
 </form></body></html>`;
 }
 
-export default app;
+export default {
+  fetch: app.fetch,
+  // Daily expiry sweep — replaces the bucket's blanket 30d R2 lifecycle rule,
+  // which couldn't exempt `permanent` objects. Scheduled by wrangler.jsonc
+  // `triggers.crons`.
+  scheduled: (_event, env, ctx) => ctx.waitUntil(sweep(env.BUCKET)),
+} satisfies ExportedHandler<Env>;

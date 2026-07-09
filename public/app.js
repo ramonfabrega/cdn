@@ -42,6 +42,8 @@ const ICONS = {
     '<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>',
   delete:
     '<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/>',
+  infinity:
+    '<path d="M18.178 8c5.096 0 5.096 8 0 8-5.095 0-7.133-8-12.739-8-4.585 0-4.585 8 0 8 5.606 0 7.644-8 12.74-8z"/>',
 };
 const icon = (n) =>
   `<svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
@@ -49,7 +51,7 @@ const icon = (n) =>
 let objects = [];
 let q = "";
 let scope = null; // null = All files, "__root__" = root, "cuanto/" = a folder prefix
-let sort = { col: "name", dir: 1 };
+let sort = { col: "date", dir: -1 }; // newest first by default
 
 // ── helpers ──
 const esc = (s) =>
@@ -157,7 +159,11 @@ function visible() {
   let list = files();
   if (q) {
     const t = q.toLowerCase();
-    list = list.filter((o) => o.key.toLowerCase().includes(t));
+    // `is:permanent` filters to sweep-exempt objects; anything else matches the key.
+    list =
+      t === "is:permanent"
+        ? list.filter((o) => o.permanent)
+        : list.filter((o) => o.key.toLowerCase().includes(t));
   } else list = list.filter((o) => inScope(o.key, scope));
   const dir = sort.dir;
   list.sort((a, b) =>
@@ -215,7 +221,7 @@ function rowHtml(o) {
   const prefix = slash === -1 ? "" : o.key.slice(0, slash + 1);
   const base = o.key.slice(slash + 1);
   return `<div class="row" data-key="${esc(o.key)}">
-    <span class="nm"><span class="label" title="${esc(o.key)}"><span class="ns">${esc(prefix)}</span><span class="base">${esc(base)}</span></span></span>
+    <span class="nm"><span class="label" title="${esc(o.key)}"><span class="ns">${esc(prefix)}</span><span class="base">${esc(base)}</span></span>${o.permanent ? `<span class="pin" title="permanent — exempt from the 30d expiry sweep">∞</span>` : ""}</span>
     ${badge(o)}
     <span class="sz">${fmtSize(o.size)}</span>
     <span class="dt dtcol">${fmtDate(o.lastModified)}</span>
@@ -227,7 +233,7 @@ function headHtml() {
     <span data-sort="name">Name <i class="ar">${arr("name")}</i></span>
     <span class="typecol" data-sort="type">Type <i class="ar">${arr("type")}</i></span>
     <span class="ralign" data-sort="size">Size <i class="ar">${arr("size")}</i></span>
-    <span class="dtcol" data-sort="date">Modified <i class="ar">${arr("date")}</i></span>
+    <span class="dtcol" data-sort="date">Uploaded <i class="ar">${arr("date")}</i></span>
     <span></span>
   </div>`;
 }
@@ -300,6 +306,7 @@ function openMenu(key, x, y, isFolder = false) {
     : `<button type="button" data-act="copy">${icon("link")}Copy link</button>
     <button type="button" data-act="open">${icon("external")}Open</button>
     <hr>
+    <button type="button" data-act="permanent">${icon("infinity")}${byKey(key)?.permanent ? "Let expire (30d)" : "Make permanent"}</button>
     <button type="button" data-act="move">${icon("move")}Move…</button>
     <button type="button" data-act="rename">${icon("rename")}Rename…</button>
     <button type="button" class="del" data-act="delete">${icon("delete")}Delete</button>`;
@@ -325,7 +332,14 @@ function doAct(action, key) {
     navigator.clipboard.writeText(o.url);
     toast("Link copied");
   } else if (action === "open") window.open(o.url, "_blank", "noopener");
-  else if (action === "move") openMove(key);
+  else if (action === "permanent") {
+    if (!o) return;
+    mutate(
+      "/api/permanent",
+      { key, permanent: !o.permanent },
+      o.permanent ? "Expires 30d after upload again" : "Marked permanent — never auto-expires"
+    );
+  } else if (action === "move") openMove(key);
   else if (action === "rename") openRename(key);
   else if (action === "delete") openDelete(key);
 }

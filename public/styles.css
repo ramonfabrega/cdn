@@ -403,6 +403,15 @@ header {
 .nm .base {
   color: var(--ink);
 }
+/* ∞ marker on permanent (sweep-exempt) objects */
+.nm .pin {
+  flex: none;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: default;
+}
 .badge {
   flex: none;
   font: 600 10px / 1 var(--sans);

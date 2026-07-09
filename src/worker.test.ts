@@ -44,6 +44,18 @@ describe("object serving (the CDN)", () => {
     expect((await SELF.fetch(`${BASE}/folder/.keep`)).status).toBe(404);
     expect((await SELF.fetch(`${BASE}/folder/`)).status).toBe(404);
   });
+
+  test(".xml serves a short max-age (mutable pointers like the Sparkle appcast)", async () => {
+    await env.BUCKET.put("mux/appcast.xml", "<rss/>");
+    const res = await SELF.fetch(`${BASE}/mux/appcast.xml`);
+    expect(res.headers.get("cache-control")).toBe("public, max-age=300");
+  });
+
+  test("other keys cache a day client-side but only an hour per edge POP", async () => {
+    await env.BUCKET.put("mux/App.zip", "zipbytes");
+    const res = await SELF.fetch(`${BASE}/mux/App.zip`);
+    expect(res.headers.get("cache-control")).toBe("public, max-age=86400, s-maxage=3600");
+  });
 });
 
 describe("upload (POST /api/upload)", () => {
@@ -60,9 +72,36 @@ describe("upload (POST /api/upload)", () => {
       ok: true,
       key: "up/hi.txt",
       url: "https://cdn.ramonfabrega.com/up/hi.txt",
+      permanent: false,
     });
     const obj = await env.BUCKET.get("up/hi.txt");
     expect(await obj?.text()).toBe("hello cdn");
+  });
+
+  test("an overwrite serves the new bytes immediately (edge cache purged)", async () => {
+    const upload = (body: string) =>
+      SELF.fetch(`${BASE}/api/upload?key=twice.txt`, { method: "POST", headers: BEARER, body });
+    await upload("v1");
+    expect(await (await SELF.fetch(`${BASE}/twice.txt`)).text()).toBe("v1"); // primes the cache
+    await upload("v2");
+    expect(await (await SELF.fetch(`${BASE}/twice.txt`)).text()).toBe("v2");
+  });
+
+  test("?permanent=1 flags the object; later overwrites keep the flag", async () => {
+    const up = (query: string) =>
+      SELF.fetch(`${BASE}/api/upload?key=mux/x.zip${query}`, {
+        method: "POST",
+        headers: BEARER,
+        body: "z",
+      });
+    expect(await (await up("&permanent=1")).json()).toMatchObject({ permanent: true });
+    expect((await env.BUCKET.head("mux/x.zip"))?.customMetadata?.permanent).toBe("1");
+    // overwrite WITHOUT the param — the flag must survive (release scripts may forget it)
+    expect(await (await up("")).json()).toMatchObject({ permanent: true });
+    expect((await env.BUCKET.head("mux/x.zip"))?.customMetadata?.permanent).toBe("1");
+    // explicit permanent=0 clears it
+    expect(await (await up("&permanent=0")).json()).toMatchObject({ permanent: false });
+    expect((await env.BUCKET.head("mux/x.zip"))?.customMetadata?.permanent).toBeUndefined();
   });
 
   test("derives content-type from the key extension (not the request)", async () => {
@@ -98,12 +137,14 @@ describe("upload (POST /api/upload)", () => {
   });
 
   test("the bearer is scoped to upload — it can't reach destructive APIs", async () => {
-    const res = await SELF.fetch(`${BASE}/api/delete`, {
-      method: "POST",
-      headers: { ...BEARER, "content-type": "application/json" },
-      body: JSON.stringify({ key: "anything" }),
-    });
-    expect(res.status).toBe(401);
+    for (const api of ["/api/delete", "/api/permanent"]) {
+      const res = await SELF.fetch(`${BASE}${api}`, {
+        method: "POST",
+        headers: { ...BEARER, "content-type": "application/json" },
+        body: JSON.stringify({ key: "anything" }),
+      });
+      expect(res.status).toBe(401);
+    }
   });
 });
 
