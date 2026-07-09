@@ -51,8 +51,9 @@ bun run types          # generate worker-configuration.d.ts (Env) — rerun when
 bun run dev            # wrangler dev → http://localhost:8787, local R2 sim + .dev.vars
 ```
 
-`.dev.vars` holds `CDN_PASSWORD` / `CDN_SESSION_SECRET` for local dev (gitignored). For real R2
-data locally use `bun run dev --remote` (needs `wrangler login`).
+`.dev.vars` holds `CDN_PASSWORD` / `CDN_SESSION_SECRET` / `CDN_UPLOAD_TOKEN` for local dev
+(gitignored — the token also feeds `wrangler types`, so `Env` includes it). For real R2 data
+locally use `bun run dev --remote` (needs `wrangler login`).
 
 - `bun run test` — `vitest` in workerd: `src/lib/` units, `src/storage.ts`, and the Worker routing
   (`src/worker.test.ts`, via `SELF`) against a **local Miniflare R2** (`@cloudflare/vitest-pool-workers`,
@@ -102,5 +103,7 @@ Worker is deployed. Still to do:
    screenshots/` + root).
 
 Nice-to-haves, not blockers: prefix-scoped TTLs (e.g. an ephemeral `24h/` namespace), a
-multi-select bulk bar. mux's Sparkle artifacts (`mux/appcast.xml`, `mux/MuxMac-latest.zip`) are
-flagged `permanent` — an installed app updating after a months-long release gap still finds them.
+multi-select bulk bar. mux's Sparkle artifacts (`mux/appcast.xml`, `mux/MuxMac-latest.zip`) had
+already been eaten by the old blanket 30d rule — the next mux release must publish them with
+`share … --permanent` (flag needed once per key; it sticks across later overwrites), after which
+an installed app updating after a months-long release gap still finds them.

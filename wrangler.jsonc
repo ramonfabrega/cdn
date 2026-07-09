@@ -28,5 +28,5 @@
   "triggers": { "crons": ["17 6 * * *"] }
 
   // Secrets (set with `wrangler secret put`, or .dev.vars locally):
-  //   CDN_PASSWORD, CDN_SESSION_SECRET
+  //   CDN_PASSWORD, CDN_SESSION_SECRET, CDN_UPLOAD_TOKEN
 }
