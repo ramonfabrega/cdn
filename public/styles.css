@@ -854,16 +854,27 @@ header {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
 }
+/* click-to-copy quick action (single upload) */
+.toast.act {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.toast.act:hover {
+  border-color: var(--accent);
+}
 
 /* ── home / overview (sunburst + ranked list) ── */
+/* min-height:100% + flex:1 on .hgrid = the chart absorbs all leftover viewport;
+   the side list is a capped column, so on big screens only the sunburst grows. */
 .home {
   padding: 14px 16px 20px;
   display: flex;
   flex-direction: column;
   gap: 14px;
-  max-width: 1060px;
+  max-width: 1560px;
   margin: 0 auto;
   width: 100%;
+  min-height: 100%;
 }
 .tiles {
   display: grid;
@@ -894,8 +905,9 @@ header {
   color: var(--faint);
 }
 .hgrid {
+  flex: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(240px, 1fr);
+  grid-template-columns: minmax(0, 1fr) clamp(260px, 28vw, 380px);
   gap: 18px;
   align-items: stretch;
   min-height: 0;
@@ -903,7 +915,6 @@ header {
 .chart {
   position: relative;
   min-height: 380px;
-  height: clamp(380px, 56vh, 560px);
 }
 .chart canvas {
   position: absolute;
@@ -968,9 +979,9 @@ header {
   color: var(--ink);
 }
 .hlist {
+  flex: 1;
   overflow: auto;
   min-height: 0;
-  max-height: clamp(340px, 52vh, 520px);
   padding-right: 2px;
 }
 .hrow {
@@ -1074,11 +1085,20 @@ header {
   margin-bottom: 6px;
 }
 @media (max-width: 900px) {
+  /* stacked layout: back to fixed heights — flex-grow would cram the pieces */
+  .home {
+    min-height: 0;
+  }
   .hgrid {
+    flex: none;
     grid-template-columns: 1fr;
   }
   .chart {
     height: clamp(300px, 46vh, 420px);
+  }
+  .hlist {
+    flex: none;
+    max-height: clamp(340px, 52vh, 520px);
   }
   .tiles {
     grid-template-columns: repeat(2, 1fr);

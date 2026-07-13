@@ -80,11 +80,20 @@ const fmtDate = (s) => {
   const d = new Date(s);
   return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
 };
-function toast(m) {
+// opts.copy = a URL: the toast becomes a click-to-copy quick action (longer-lived)
+function toast(m, opts) {
+  const url = opts?.copy;
   toastEl.textContent = m;
+  toastEl.classList.toggle("act", !!url);
+  toastEl.onclick = url
+    ? () => {
+        navigator.clipboard.writeText(url);
+        toast("Link copied");
+      }
+    : null;
   toastEl.classList.add("show");
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => toastEl.classList.remove("show"), 1700);
+  toast._t = setTimeout(() => toastEl.classList.remove("show"), url ? 6000 : 1700);
 }
 
 // ── scope / derive ──
@@ -514,6 +523,7 @@ async function uploadFiles(files) {
   if (!list.length) return;
   const prefix = uploadPrefix();
   let ok = 0;
+  let last = null;
   for (let i = 0; i < list.length; i++) {
     const f = list[i];
     const key = (prefix + f.name).replace(/^\/+/, "");
@@ -526,16 +536,20 @@ async function uploadFiles(files) {
       const d = await res.json();
       if (!res.ok) throw new Error(d.error || res.status);
       ok++;
+      last = d; // { key, url } — feeds the click-to-copy toast on single uploads
     } catch (e) {
       toast(`Failed: ${f.name} — ${e.message}`);
     }
   }
   await load();
-  toast(
-    ok === list.length
-      ? `Uploaded ${ok} file${ok === 1 ? "" : "s"}`
-      : `Uploaded ${ok}/${list.length}`
-  );
+  if (ok === 1 && list.length === 1 && last?.url)
+    toast(`Uploaded ${list[0].name} — click to copy link`, { copy: last.url });
+  else
+    toast(
+      ok === list.length
+        ? `Uploaded ${ok} file${ok === 1 ? "" : "s"}`
+        : `Uploaded ${ok}/${list.length}`
+    );
 }
 // Pull top-level files from a drop; skip directories (need the entries API to detect).
 function filesFromDrop(dt) {
@@ -586,6 +600,28 @@ window.addEventListener("drop", (e) => {
   dragDepth = 0;
   dropzone.classList.remove("show");
   uploadFiles(filesFromDrop(e.dataTransfer));
+});
+// ⌘V with files on the clipboard (screenshot, copied Finder file) uploads like a
+// drop. Text pastes are untouched — we only act when the clipboard carries files
+// — and a sheet's inputs (rename / new folder) always keep normal paste.
+window.addEventListener("paste", (e) => {
+  if (sheet.classList.contains("show")) return;
+  const fs = [...(e.clipboardData?.files || [])];
+  if (!fs.length) return;
+  e.preventDefault();
+  // clipboard bitmaps all arrive as "image.png" — stamp them so pastes don't overwrite
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+  uploadFiles(
+    fs.map((f, i) => {
+      if (!/^image\.\w+$/i.test(f.name)) return f; // real filename (e.g. Finder copy) — keep it
+      const ext = (f.type.split("/")[1] || "png").replace("jpeg", "jpg");
+      return new File([f], `paste-${stamp}${fs.length > 1 ? `-${i + 1}` : ""}.${ext}`, {
+        type: f.type,
+      });
+    })
+  );
 });
 
 // ── preview ──
