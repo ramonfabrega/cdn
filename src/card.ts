@@ -155,14 +155,28 @@ function sunburstMarks(root: SunNode, rings: number): Mark[] {
 }
 
 const degOf = (rad: number) => ((rad + Math.PI / 2) * 180) / Math.PI; // conic 0deg = top
+
+/** One ring's wedges → conic-gradient stops. Adjacent same-fill wedges coalesce
+    and touching wedges transition color-to-color directly — a bg stop between
+    every wedge would rasterize as a hairline seam, striping ranks of slivers
+    that the canvas explorer renders as one solid block. bg fills only real gaps. */
 const grad = (wedges: Mark[]) => {
-  const stops = wedges.flatMap((w) => [
-    `${C.bg} ${degOf(w.a0).toFixed(3)}deg`,
-    `${w.fill} ${degOf(w.a0).toFixed(3)}deg`,
-    `${w.fill} ${degOf(w.a1).toFixed(3)}deg`,
-    `${C.bg} ${degOf(w.a1).toFixed(3)}deg`,
-  ]);
-  return `conic-gradient(from 0deg, ${C.bg} 0deg, ${stops.join(", ")}, ${C.bg} 360deg)`;
+  const merged: { from: number; to: number; fill: string }[] = [];
+  for (const w of wedges) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.fill === w.fill && degOf(w.a0) - prev.to < 0.01) prev.to = degOf(w.a1);
+    else merged.push({ from: degOf(w.a0), to: degOf(w.a1), fill: w.fill });
+  }
+  const stops: string[] = [];
+  let pos = 0;
+  for (const m of merged) {
+    if (m.from > pos + 0.01)
+      stops.push(`${C.bg} ${pos.toFixed(3)}deg`, `${C.bg} ${m.from.toFixed(3)}deg`);
+    stops.push(`${m.fill} ${m.from.toFixed(3)}deg`, `${m.fill} ${m.to.toFixed(3)}deg`);
+    pos = m.to;
+  }
+  if (pos < 360) stops.push(`${C.bg} ${pos.toFixed(3)}deg`, `${C.bg} 360deg`);
+  return `conic-gradient(from 0deg, ${stops.join(", ")})`;
 };
 
 function sunburst(prefix: string, subtree: SubtreeEntry[], items: number, size: string): Node {
