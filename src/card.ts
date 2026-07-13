@@ -367,10 +367,9 @@ export function folderCard(
       fontFamily: "Inter",
     },
     [
-      // identity column: brand → name → sunburst (totals live in the hole)
+      // identity column: name top-left → sunburst → brand stamped bottom-left
       box({ display: "flex", flexDirection: "column", flexGrow: 1 }, [
-        text("cdn.ramonfabrega.com", { fontSize: 26, fontWeight: 600, color: C.faint }),
-        box({ display: "flex", flexDirection: "column", gap: 8, marginTop: 26 }, [
+        box({ display: "flex", flexDirection: "column", gap: 8 }, [
           ...(parent ? [text(trunc(parent, 34), { fontSize: 26, color: C.faint })] : []),
           text(`${trunc(name, 28)}/`, { fontSize: nameSize, fontWeight: 600, color: C.ink }),
         ]),
@@ -381,9 +380,11 @@ export function folderCard(
             alignItems: "center",
             justifyContent: "center",
             marginTop: 8,
+            marginBottom: 8,
           },
           [sunburst(prefix, subtree, items, subTotal ? fmtSize(subTotal) : "")]
         ),
+        text("cdn.ramonfabrega.com", { fontSize: 26, fontWeight: 600, color: C.faint }),
       ]),
       // listing column: the folder page in miniature
       panel,
