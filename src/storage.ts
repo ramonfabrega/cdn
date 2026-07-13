@@ -78,6 +78,17 @@ export async function listFolder(bucket: R2Bucket, prefix: string): Promise<Fold
   return { files, folders: [...folders].sort() };
 }
 
+/** Flat subtree under a prefix — keys + sizes only, first list page (≤1000
+    objects). Feeds the og:image card's sunburst; a card needs shape, not
+    completeness, so no pagination. */
+export type SubtreeEntry = { key: string; size: number };
+export async function listSubtree(bucket: R2Bucket, prefix: string): Promise<SubtreeEntry[]> {
+  const res = await bucket.list({ prefix, limit: 1000 });
+  return res.objects
+    .filter((o) => !o.key.endsWith("/") && !o.key.endsWith("/.keep") && o.key !== ".keep")
+    .map((o) => ({ key: o.key, size: o.size }));
+}
+
 /** Full object list for the bucket — the client builds the tree from this. */
 export async function tree(bucket: R2Bucket): Promise<Entry[]> {
   const raws = await listAll(bucket);

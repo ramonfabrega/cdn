@@ -17,8 +17,8 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
 
 - **`src/lib/cdn.ts`** — pure, Worker-internal helpers: MIME map, key→ext classification, and the
   public-URL builder. Zero deps, no runtime-specific imports (own `extname`) → trivially testable.
-- **`src/lib/ui.ts`** — shared design tokens + formatters for the server-rendered pages (folder
-  listing, login — and future og:image cards): the OKLCH base palette (mirror of `styles.css`),
+- **`src/lib/ui.ts`** — shared design tokens + formatters for the server-rendered surfaces (folder
+  listing, login, og:image cards): the OKLCH base palette (mirror of `styles.css`),
   type-badge hues, `href`/`fmtSize`/`fmtDate`. Pure and dep-free like the rest of `lib/`.
 - **`src/worker.ts`** — the Worker. Hono `<{ Bindings: Env }>`. Gates `/` + `/api/*` (signed
   cookie, **fail-closed** — no `CDN_PASSWORD`, no login); everything else is public.
@@ -40,8 +40,23 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
 - **`src/folder.tsx`** / **`src/login.tsx`** — the server-rendered pages (folder listing, sign-in)
   as `hono/jsx` components (auto-escaped; string out via `folderPage()`/`loginPage()`). esbuild
   (wrangler + vitest) transpiles `.tsx` from the tsconfig `jsx` fields — no build step, no new deps.
+  Folder pages carry `og:`/`twitter:` unfurl meta pointing at the card route below (canonical
+  `https://cdn.ramonfabrega.com` URLs — scrapers need absolute, and the Worker owns one host).
+- **`src/card.ts`** — the 1200×630 og:image card `GET /.og/<prefix>.png` renders, drawn by
+  [takumi](https://github.com/kane50613/takumi)'s WASM renderer (the one real dependency added;
+  ~1.6 MB gz total on a 10 MB paid limit — wrangler resolves the package's `workerd` export
+  condition, no config). A plain takumi node tree — no React, no JSX. Left: the explorer's
+  Overview **sunburst** in miniature, drawn as concentric conic-gradient circles (no canvas):
+  same 9-slot palette + design rules as `app.js` — wedges by subtree bytes (via `listSubtree`),
+  tail rolled into a "smaller items" wedge, outer ring faded via `color-mix`, ring count adapting
+  to real depth, totals in the hole. Right: the folder page in miniature — a listing panel
+  (subfolders first, name + type badge + size, capped with `+ N more`) in the `lib/ui.ts` badge
+  hues. Fixed dark theme. Two Inter weights ship as `src/assets/*.woff2` via a
+  wrangler `Data` rule (~24 KB each). Dot-prefixed route à la `.keep`, so it can't shadow a real
+  key; cached like the page (`max-age=300`, no edge cache).
 - **`src/storage.ts`** — R2 ops over the **`BUCKET`** binding: `tree()`, `listFolder` (one
-  delimited level, feeds the public folder pages), `createFolder`, `move`, `rename`, `remove`,
+  delimited level, feeds the public folder pages), `listSubtree` (full-depth keys + sizes, one
+  list page — feeds the card's sunburst), `createFolder`, `move`, `rename`, `remove`,
   `setPermanent`, `sweep`. Each takes the bucket (per-request `env`).
   Move/rename are copy+delete (customMetadata travels along); mutations return the keys to purge.
 - **`wrangler.jsonc`** — Worker config: R2 binding, `assets` (`run_worker_first` → the gate covers
@@ -140,29 +155,13 @@ already been eaten by the old blanket 30d rule — the next mux release must pub
 `share … --permanent` (flag needed once per key; it sticks across later overwrites), after which
 an installed app updating after a months-long release gap still finds them.
 
-## Next arcs (prep — pick up fresh)
+## Recent arcs
 
-Sketched after the folder-pages/Overview work (#8). Facts below were verified at the time of
-writing; the shapes are starting points, not commitments — re-verify library APIs at pickup.
-(Arc 1 — server pages to `hono/jsx` — shipped: `src/folder.tsx`, `src/login.tsx`, shared tokens
-in `src/lib/ui.ts`, zero new deps. The client explorer stayed vanilla/zero-build — the
-inline-one-doc boot and static skeleton are load-bearing, per the single-paint rule above.)
-
-**Arc 2 — og:image / richer previews (takumi).** Raw file URLs already unfurl natively in
-iMessage/Slack via content-type (images, video). Folder listing pages serve HTML with no `og:`
-tags — that's the unfurl-magic gap.
-
-- [takumi](https://github.com/kane50613/takumi): Rust renderer, spiritual successor to
-  vercel/og — JSX components with a Tailwind-ish `tw` prop, `ImageResponse` from
-  `takumi-js/response`, a WASM build that runs on Workers, PNG/WebP/SVG out, CSS grid/gradients
-  beyond what satori could do.
-- Constraints (checked): account is on Workers Paid → 10 MB gzip script limit; this Worker is
-  ~25 KB gz today and WASM renderers run ≈1–3 MB gz, so it fits. WASM affects bundle/cold-start
-  only — pages gain only meta tags over the wire; cards render server-side. Fonts must be
-  bundled (one Latin weight is enough for cards).
-- Shape idea: `og:` + `twitter:card` meta on folder pages pointing at a reserved dot-prefixed
-  route (e.g. `/.og/<prefix>.png` — dotfile keys are already hidden/reserved à la `.keep`),
-  card drawn in the explorer's 9-slot palette: folder name, `N items · size`, the type-badge
-  mix, maybe a proportional bar. Cache like the page (`max-age=300`, no edge cache).
-- Open choices: card design; whether natively-unfurling files also want cards (or pretty file
-  pages for non-visual types like zips/logs); whether writes should purge card caches.
+Both post-#8 arcs have shipped: **arc 1** — server pages to `hono/jsx` (`src/folder.tsx`,
+`src/login.tsx`, shared tokens in `src/lib/ui.ts`, zero new deps; the client explorer stayed
+vanilla/zero-build — the inline-one-doc boot and static skeleton are load-bearing, per the
+single-paint rule above) — and **arc 2** — og:image unfurl cards (`src/card.ts` + the `/.og/`
+route + meta on folder pages; raw file URLs already unfurled natively via content-type, folder
+pages were the gap). Ideas deliberately left on the table: cards (or pretty file pages) for
+non-visual file types like zips/logs; purging card caches on write (today `max-age=300` just
+ages out — a stale card for ≤5 min is fine).

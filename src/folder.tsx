@@ -6,6 +6,7 @@
 
 import type { FC } from "hono/jsx";
 
+import { publicUrl } from "./lib/cdn.ts";
 import { BADGE, BASE_TOKENS, fmtDate, fmtSize, href } from "./lib/ui.ts";
 import type { Entry } from "./storage.ts";
 
@@ -141,6 +142,20 @@ const Page: FC<{ prefix: string; files: Entry[]; folders: string[] }> = ({
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <meta name="robots" content="noindex" />
         <title>{name} · cdn</title>
+        {/* unfurl card — /.og/<prefix>.png (see src/card.ts). Absolute URLs, as
+            scrapers require — the canonical domain, not the request origin: the
+            Worker owns exactly one host, and dev's simulated origin is http. */}
+        <meta property="og:title" content={`${name}/`} />
+        <meta property="og:description" content={meta} />
+        <meta property="og:type" content="website" />
+        <meta property="og:url" content={publicUrl(prefix)} />
+        <meta
+          property="og:image"
+          content={`${publicUrl(`.og/${prefix.replace(/\/$/, "")}`)}.png`}
+        />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta name="twitter:card" content="summary_large_image" />
         <style dangerouslySetInnerHTML={{ __html: CSS }} />
       </head>
       <body>

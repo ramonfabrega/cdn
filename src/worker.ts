@@ -14,13 +14,16 @@
 
 import { Hono } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
+import { ImageResponse } from "takumi-js/response";
 
+import { CARD_FONTS, folderCard } from "./card.ts";
 import { folderPage } from "./folder.tsx";
 import { DOMAIN, mimeFor, publicUrl } from "./lib/cdn.ts";
 import { loginPage } from "./login.tsx";
 import {
   createFolder,
   listFolder,
+  listSubtree,
   move,
   remove,
   rename,
@@ -270,6 +273,33 @@ app.get("/", async (c) => {
     `<script type="module">${js}</script>`
   );
   return c.html(page);
+});
+
+// ── og:image cards ────────────────────────────────────────────────────────────
+// /.og/<prefix>.png renders the 1200×630 unfurl card for a folder page (the same
+// listFolder data, drawn by takumi's WASM renderer — see src/card.ts). Reserved
+// under a dot-prefix à la `.keep`, so it can never shadow a real object key.
+// Cached like the folder page itself: short client max-age, no edge cache.
+app.get("/.og/*", async (c) => {
+  const m = /^\/\.og\/(.+)\.png$/.exec(new URL(c.req.url).pathname);
+  if (!m?.[1]) return c.notFound();
+  const prefix = `${decodeURIComponent(m[1])}/`;
+  const [{ files, folders }, subtree] = await Promise.all([
+    listFolder(c.env.BUCKET, prefix),
+    listSubtree(c.env.BUCKET, prefix), // full-depth sizes for the sunburst
+  ]);
+  if (!files.length && !folders.length && !(await c.env.BUCKET.head(`${prefix}.keep`))) {
+    return c.notFound();
+  }
+  return new ImageResponse(folderCard(prefix, files, folders, subtree), {
+    width: 1200,
+    height: 630,
+    format: "png",
+    fonts: CARD_FONTS,
+    headers: { "cache-control": "public, max-age=300" },
+    // render errors happen after the 200 headers stream out — surface them in logs
+    onError: (e) => console.error("card render:", e),
+  });
 });
 
 // Parse a Range header into absolute byte offsets, given the object size.

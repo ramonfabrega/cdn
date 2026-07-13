@@ -9,6 +9,7 @@ import { describe, expect, test } from "vitest";
 import {
   createFolder,
   EXPIRY_DAYS,
+  listSubtree,
   move,
   remove,
   rename,
@@ -44,6 +45,18 @@ describe("tree", () => {
     expect(entry?.ext).toBe("png");
     expect(entry?.category).toBe("image");
     expect(entry?.url).toBe(`https://cdn.ramonfabrega.com/${P}pic.png`);
+  });
+});
+
+describe("listSubtree", () => {
+  test("returns full-depth keys + sizes under a prefix, hiding .keep markers", async () => {
+    await put("sub/a.txt", "aa", "text/plain");
+    await put("sub/nested/deep/b.bin", "bbbb", "application/octet-stream");
+    await put("sub/nested/.keep", "", "text/plain");
+    await put("elsewhere/c.txt", "c", "text/plain");
+    const sub = await listSubtree(bucket, "sub/");
+    expect(sub.map((e) => e.key).sort()).toEqual(["sub/a.txt", "sub/nested/deep/b.bin"]);
+    expect(sub.find((e) => e.key === "sub/nested/deep/b.bin")?.size).toBe(4);
   });
 });
 

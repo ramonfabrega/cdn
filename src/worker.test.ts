@@ -110,6 +110,38 @@ describe("folder share pages", () => {
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("");
   });
+
+  test("carries og/twitter unfurl meta pointing at the canonical card URL", async () => {
+    await env.BUCKET.put("golf-sim/sfx family/1.wav", "aaa");
+    const html = await (await SELF.fetch(`${BASE}/golf-sim/sfx%20family/`)).text();
+    expect(html).toContain('property="og:title" content="sfx family/"');
+    expect(html).toContain('property="og:description" content="1 item · 3 B"');
+    expect(html).toContain(
+      'property="og:url" content="https://cdn.ramonfabrega.com/golf-sim/sfx%20family/"'
+    );
+    expect(html).toContain(
+      'property="og:image" content="https://cdn.ramonfabrega.com/.og/golf-sim/sfx%20family.png"'
+    );
+    expect(html).toContain('name="twitter:card" content="summary_large_image"');
+  });
+});
+
+describe("og:image cards (GET /.og/<prefix>.png)", () => {
+  test("renders a PNG for a folder prefix (public, short max-age)", async () => {
+    await env.BUCKET.put("golf-sim/sfx-family/1.wav", "aaa");
+    const res = await SELF.fetch(`${BASE}/.og/golf-sim/sfx-family.png`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toBe("public, max-age=300");
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    expect([...bytes.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]); // PNG magic
+  });
+
+  test("404 for a prefix with no objects, and for a card URL without .png", async () => {
+    expect((await SELF.fetch(`${BASE}/.og/no-such-folder.png`)).status).toBe(404);
+    await env.BUCKET.put("real/x.txt", "x");
+    expect((await SELF.fetch(`${BASE}/.og/real`)).status).toBe(404);
+  });
 });
 
 describe("upload (POST /api/upload)", () => {

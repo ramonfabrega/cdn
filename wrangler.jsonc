@@ -21,6 +21,11 @@
   // (replaces R2's custom-domain serving). wrangler provisions the DNS + cert.
   "routes": [{ "pattern": "cdn.ramonfabrega.com", "custom_domain": true }],
 
+  // Font bytes for the og:image cards (src/card.ts) — bundled as raw ArrayBuffers.
+  // takumi's WASM module needs no rule: wrangler resolves the package's `workerd`
+  // export condition and compiles the .wasm import natively.
+  "rules": [{ "type": "Data", "globs": ["**/*.woff2"], "fallthrough": true }],
+
   // Daily expiry sweep (src/storage.ts `sweep`): deletes objects >30d old unless
   // flagged `permanent`. Replaces the bucket's blanket R2 lifecycle rule, which
   // couldn't exempt individual objects (only the multipart-abort rule remains on
