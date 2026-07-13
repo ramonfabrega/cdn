@@ -913,10 +913,17 @@ function visibleDepth(node, d = 1) {
   return Math.min(4, deep);
 }
 function sunburstMarks(node, w, h) {
-  const R = Math.min(w, h) / 2 - 14;
+  const R = Math.min(w, h) / 2 - 10;
   const r0 = Math.min(110, Math.max(46, R * 0.22)); // center hole
   const rings = visibleDepth(node);
-  const band = (R - r0) / rings;
+  // inner rings carry most of the bytes, so they get most of the radius too:
+  // each ring is 1.2× as thick as the one outside it. The dense core reads
+  // big; the sparse deep rings thin out instead of hogging half the circle.
+  const weights = Array.from({ length: rings }, (_, i) => 1.2 ** (rings - 1 - i));
+  const wsum = weights.reduce((a, b) => a + b, 0);
+  const edge = [0];
+  for (const wt of weights) edge.push(edge[edge.length - 1] + ((R - r0) * wt) / wsum);
+  const band = (R - r0) / rings; // mean thickness — the zoom anim's shift unit
   const marks = [];
   (function ring(n, a0, a1, depth) {
     if (depth > rings || !n.total) return;
@@ -927,14 +934,14 @@ function sunburstMarks(node, w, h) {
         a += span;
         continue;
       }
-      const rIn = r0 + (depth - 1) * band;
+      const rIn = r0 + edge[depth - 1];
       const fill = fillOf(e.key, depth, e.rest);
       marks.push({
         ...e,
         a0: a,
         a1: a + span,
         rIn,
-        rOut: rIn + band - 1, // -1px gap between rings
+        rOut: r0 + edge[depth] - 1, // -1px gap between rings
         depth,
         fillRgb: fill,
         fillCss: cssRgb(fill),
