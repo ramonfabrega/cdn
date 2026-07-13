@@ -155,6 +155,27 @@ header {
 .search kbd {
   flex: none;
 }
+/* ∞ pill — global "permanent files only" filter */
+.permbtn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 32px;
+  color: var(--dim);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.permbtn:hover {
+  color: var(--ink);
+  border-color: var(--line2);
+}
+.permbtn.on {
+  color: var(--accent);
+  border-color: var(--accent);
+}
 .signout {
   flex: none;
   font-size: 13px;

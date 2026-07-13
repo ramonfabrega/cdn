@@ -55,6 +55,7 @@ let q = "";
 const HOME = "__home__";
 let scope = HOME; // HOME = overview, null = All files, "__root__" = root, "cuanto/" = a folder prefix
 let sort = { col: "date", dir: -1 }; // newest first by default
+let permOnly = false; // ∞ filter: every view derives from permanent files only
 
 // ── helpers ──
 const esc = (s) =>
@@ -97,16 +98,23 @@ function toast(m, opts) {
 }
 
 // ── scope / derive ──
-const files = () => objects.filter((o) => !isMarker(o.key));
+// files() is the single derivation choke point: rail counts, prefixes, the
+// sunburst tree, tiles, and both lists all pull from it — so the ∞ filter
+// applied here re-scopes the entire UI at once.
+const allFiles = () => objects.filter((o) => !isMarker(o.key));
+const files = () => (permOnly ? allFiles().filter((o) => o.permanent) : allFiles());
 function inScope(key, sc) {
   if (sc === null || sc === HOME) return true;
   if (sc === "__root__") return !key.includes("/");
   return key.startsWith(sc);
 }
 const countFor = (sc) => files().filter((o) => inScope(o.key, sc)).length;
-function allPrefixes() {
+// ∞ mode hides paths holding nothing permanent (folders come from file paths,
+// not markers) — except with all=true, used when picking a move destination,
+// where every real folder stays fair game.
+function allPrefixes(all = false) {
   const set = new Set([""]);
-  for (const o of objects) {
+  for (const o of all || !permOnly ? objects : files()) {
     const parts = o.key.split("/");
     parts.pop();
     let acc = "";
@@ -253,6 +261,7 @@ function validateScope() {
   }
   scope = s;
 }
+const PERM_EMPTY = "No permanent files — right-click a file → “Make permanent”.";
 function render() {
   validateScope();
   renderRail();
@@ -306,9 +315,11 @@ function renderList() {
   scopeEl.textContent =
     scope === null || scope === HOME ? "All files" : scope === "__root__" ? "root" : scope;
   const rows = visible();
-  countEl.textContent = q ? `${rows.length} matches` : `${rows.length} files`;
+  countEl.textContent = q
+    ? `${rows.length} matches`
+    : `${rows.length}${permOnly ? " permanent" : ""} files`;
   if (!rows.length) {
-    listEl.innerHTML = `<div class="state">${q ? "No matches." : "Empty."}</div>`;
+    listEl.innerHTML = `<div class="state">${q ? "No matches." : permOnly ? PERM_EMPTY : "Empty."}</div>`;
     return;
   }
   listEl.innerHTML = headHtml() + rows.map(rowHtml).join("");
@@ -424,7 +435,7 @@ function openMove(key) {
   const isFolder = key.endsWith("/");
   const stripped = key.replace(/\/$/, "");
   const cur = stripped.includes("/") ? `${stripped.slice(0, stripped.lastIndexOf("/"))}/` : "";
-  sbody.innerHTML = allPrefixes()
+  sbody.innerHTML = allPrefixes(true)
     .map((p) => {
       const bad = p === cur || (isFolder && (p === key || p.startsWith(key)));
       return `<div class="pick${bad ? " disabled" : ""}" data-to="${esc(p)}">📁 ${esc(p || "root")}</div>`;
@@ -664,6 +675,15 @@ $("#railbtn").addEventListener("click", () => {
 railScrim.addEventListener("click", closeRail);
 
 // ── global events ──
+// ∞ toggle: one global axis, orthogonal to scope/search — every view re-derives
+function setPermOnly(v) {
+  if (v === permOnly) return;
+  permOnly = v;
+  $("#permbtn").classList.toggle("on", v);
+  homeInvalidate();
+  render();
+}
+$("#permbtn").addEventListener("click", () => setPermOnly(!permOnly));
 qEl.addEventListener("input", () => {
   q = qEl.value.trim();
   if (scope === HOME)
@@ -778,10 +798,10 @@ function homeInvalidate() {
   slotMap = null;
 }
 
-// ── tree (rollup of the flat object list) ──
-function buildTree() {
+// ── tree (rollup of a flat file list) ──
+function buildTree(list) {
   const root = { name: "", prefix: "", dirs: new Map(), files: [], total: 0, count: 0 };
-  for (const o of files()) {
+  for (const o of list) {
     const parts = o.key.split("/");
     parts.pop();
     let node = root;
@@ -1237,7 +1257,7 @@ function renderHlist() {
   if (!node || !el) return;
   const rows = entriesOf(node, 24);
   if (!rows.length) {
-    el.innerHTML = '<div class="state">Empty.</div>';
+    el.innerHTML = `<div class="state">${permOnly ? PERM_EMPTY : "Empty."}</div>`;
     return;
   }
   const max = rows[0]?.size || 1;
@@ -1338,10 +1358,12 @@ function bindHomeEvents() {
 
 function renderHome() {
   scopeEl.textContent = "Overview";
-  countEl.textContent = `${files().length} files`;
+  countEl.textContent = `${files().length}${permOnly ? " permanent" : ""} files`;
   if (!tree) {
-    tree = buildTree();
-    slotMap = buildSlots(tree);
+    tree = buildTree(files());
+    // hues rank on the UNfiltered tree, so folders keep their color when the
+    // ∞ filter toggles — same map, re-scoped, instead of a jarring recolor
+    slotMap = buildSlots(buildTree(allFiles()));
     if (hscope && !nodeAt(tree, hscope)) hscope = ""; // scoped folder vanished → back to root
   }
   if (listEl.dataset.view !== "home") {
@@ -1379,12 +1401,14 @@ darkMq.addEventListener?.("change", () => {
 // ── url sync ─────────────────────────────────────────────────────────────────
 // #/<prefix>/ = Overview drilled to a folder (the explorer twin of the public
 // /<prefix>/ share page) · #f = All files · #f/ = root · #f/<prefix>/ = a scoped
-// file list. Drills push history entries, so Back is an animated zoom-out.
+// file list · a ?perm suffix on any of these = the ∞ filter is on. Drills push
+// history entries, so Back is an animated zoom-out.
 let applyingHash = false;
 function hashFor() {
-  if (scope === HOME) return hscope ? `#/${hscope}` : "#/";
-  if (scope === null) return "#f";
-  return `#f/${scope === "__root__" ? "" : scope}`;
+  const perm = permOnly ? "?perm" : "";
+  if (scope === HOME) return (hscope ? `#/${hscope}` : "#/") + perm;
+  if (scope === null) return `#f${perm}`;
+  return `#f/${scope === "__root__" ? "" : scope}${perm}`;
 }
 function syncHash() {
   if (applyingHash) return;
@@ -1393,9 +1417,16 @@ function syncHash() {
   if (location.hash !== h) location.hash = h;
 }
 function applyHash() {
-  const h = decodeURIComponent(location.hash);
+  let h = decodeURIComponent(location.hash);
   applyingHash = true;
   try {
+    const perm = h.endsWith("?perm");
+    if (perm) h = h.slice(0, -"?perm".length);
+    if (perm !== permOnly) {
+      permOnly = perm;
+      $("#permbtn").classList.toggle("on", perm);
+      homeInvalidate(); // tree goes null → the home path below re-renders instead of animating
+    }
     if (h.startsWith("#f")) {
       const p = h.slice(2).replace(/^\//, "");
       scope = h === "#f" ? null : p ? p.replace(/\/?$/, "/") : "__root__";
