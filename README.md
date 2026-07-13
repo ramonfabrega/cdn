@@ -129,3 +129,40 @@ multi-select bulk bar. mux's Sparkle artifacts (`mux/appcast.xml`, `mux/MuxMac-l
 already been eaten by the old blanket 30d rule — the next mux release must publish them with
 `share … --permanent` (flag needed once per key; it sticks across later overwrites), after which
 an installed app updating after a months-long release gap still finds them.
+
+## Next arcs (prep — pick up fresh)
+
+Two independent arcs sketched after the folder-pages/Overview work (#8). Facts below were
+verified at the time of writing; the shapes are starting points, not commitments — re-verify
+library APIs at pickup.
+
+**Arc 1 — server pages to JSX (`hono/jsx`).** More shared DNA between the server-rendered
+surfaces without a framework or added build step.
+
+- Fact: wrangler bundles the Worker with esbuild, which transpiles `.tsx` out of the box, and
+  hono (already a dep) ships `hono/jsx` for server rendering — zero new deps; tsconfig gains
+  `"jsx": "react-jsx"`, `"jsxImportSource": "hono/jsx"`.
+- Scope idea: `src/folder.ts` → `.tsx` components; `loginPage()` in worker.ts likewise; pull the
+  shared tokens (OKLCH palette, badge hues, `fmtSize`/`fmtDate`) into one module all server pages
+  import — and which future takumi cards (also JSX, see arc 2) can share.
+- Non-goal: the client explorer (`public/app.js`) stays vanilla/zero-build — the inline-one-doc
+  boot and static skeleton are load-bearing (single-paint rule above).
+
+**Arc 2 — og:image / richer previews (takumi).** Raw file URLs already unfurl natively in
+iMessage/Slack via content-type (images, video). Folder listing pages serve HTML with no `og:`
+tags — that's the unfurl-magic gap.
+
+- [takumi](https://github.com/kane50613/takumi): Rust renderer, spiritual successor to
+  vercel/og — JSX components with a Tailwind-ish `tw` prop, `ImageResponse` from
+  `takumi-js/response`, a WASM build that runs on Workers, PNG/WebP/SVG out, CSS grid/gradients
+  beyond what satori could do.
+- Constraints (checked): account is on Workers Paid → 10 MB gzip script limit; this Worker is
+  ~25 KB gz today and WASM renderers run ≈1–3 MB gz, so it fits. WASM affects bundle/cold-start
+  only — pages gain only meta tags over the wire; cards render server-side. Fonts must be
+  bundled (one Latin weight is enough for cards).
+- Shape idea: `og:` + `twitter:card` meta on folder pages pointing at a reserved dot-prefixed
+  route (e.g. `/.og/<prefix>.png` — dotfile keys are already hidden/reserved à la `.keep`),
+  card drawn in the explorer's 9-slot palette: folder name, `N items · size`, the type-badge
+  mix, maybe a proportional bar. Cache like the page (`max-age=300`, no edge cache).
+- Open choices: card design; whether natively-unfurling files also want cards (or pretty file
+  pages for non-visual types like zips/logs); whether writes should purge card caches.
