@@ -101,7 +101,9 @@ locally use `bun run dev --remote` (needs `wrangler login`).
 - `bun run test` — `vitest` in workerd: `src/lib/` units, `src/storage.ts`, and the Worker routing
   (`src/worker.test.ts`, via `SELF`) against a **local Miniflare R2** (`@cloudflare/vitest-pool-workers`,
   per-test isolation). Hermetic — no real R2, no `passage`.
-- `bunx biome check --write .` — format + lint (`biome.jsonc`).
+- `bun run lint` — format + lint (`biome.jsonc`); `bunx biome check --write .` to fix in place.
+- `bun run check` — exactly what CI runs (install + lint + test). Run it before pushing and a green
+  build is a formality. (`bun run test`, never `bun test` — that's bun's own runner, not vitest.)
 - One tsconfig (`tsconfig.json`, Worker types covering `src/`); `bin/share` is `@ts-nocheck` Bun glue, fully self-contained (imports nothing from cdn).
 
 To **ship**: branch → PR (CI runs the tests and comments a preview URL you can click) → merge to
@@ -124,7 +126,7 @@ it is recorded here instead:
 | Setting | Value |
 | --- | --- |
 | Root directory (“Path”) | `/cdn` |
-| Build command | `bun install && bunx biome check . && bun run test` |
+| Build command | `bun run check` |
 | Deploy command | `npx wrangler deploy` |
 | Non-production branch deploy command | `npx wrangler versions upload` |
 | Production branch | `master` |
@@ -139,8 +141,19 @@ directory** is dashboard-relative and leading-slashed (`/cdn`, matching Cloudfla
 commits touching `bin/`, `claude/`, or anything outside `cdn/` never trigger a build. (Cloudflare's
 `*` matches zero or more characters, `/` included, so `cdn/*` covers `cdn/src/**` too.)
 
-Lint and the test suite both run as part of the build command, so a red `biome` or a red `vitest`
-blocks the deploy — nothing reaches `cdn.ramonfabrega.com` that wouldn't pass locally.
+**`bun run check`** (`package.json`) is the whole build: `bun install --frozen-lockfile && biome
+check . && vitest run`. A red lint or a red test blocks the deploy — nothing reaches
+`cdn.ramonfabrega.com` that wouldn't pass locally. Deliberately a *script*, not a `&&` chain typed
+into the dashboard: what CI runs is then source-controlled, reviewable in a diff, runnable verbatim
+on a laptop, and changing it never means editing the dashboard again. The dashboard holds one
+stable string; the repo holds the meaning. (`--frozen-lockfile` also fails the build on a
+`bun.lock` that drifted from `package.json`, which a local `bun install` would silently fix — note
+`bun ci` does **not** do this. Despite the name it is not `npm ci`: it's a plain install that
+happily accepts a drifted lockfile.)
+
+**Always `bun run <script>`, never `bun <script>`.** Bun's builtins shadow same-named scripts
+silently: `bun ci` runs an *install* and `bun test` runs *bun's* test runner — both exit 0 without
+touching vitest or biome, which is why the script is `check` and not `ci`.
 
 Build watch paths, caching, and the rest are only editable **after** the repo is connected (the
 connect modal doesn't show them). Connecting does not build anything retroactively — the first

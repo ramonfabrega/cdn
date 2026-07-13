@@ -7,7 +7,9 @@
     "deploy": "wrangler deploy",
     "preview": "wrangler versions upload",
     "types": "wrangler types",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint": "biome check .",
+    "check": "bun install --frozen-lockfile && biome check . && vitest run"
   },
   "dependencies": {
     "hono": "^4.6.0",
