@@ -49,6 +49,35 @@ async function listAll(bucket: R2Bucket, prefix = ""): Promise<RawObj[]> {
 
 // ── public API ───────────────────────────────────────────────────────────
 
+/** One level of a folder: files directly under `prefix` + the immediate
+    subfolder prefixes (delimited list). `.keep` markers are hidden. This feeds
+    the PUBLIC folder share pages, so it never lists recursively. */
+export type FolderListing = { files: Entry[]; folders: string[] };
+export async function listFolder(bucket: R2Bucket, prefix: string): Promise<FolderListing> {
+  const files: Entry[] = [];
+  const folders = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const res = await bucket.list({ prefix, delimiter: "/", limit: 1000, cursor });
+    for (const o of res.objects) {
+      if (o.key.endsWith("/") || o.key.endsWith("/.keep") || o.key === ".keep") continue;
+      const c = classify(o.key);
+      files.push({
+        key: o.key,
+        size: o.size,
+        lastModified: o.uploaded.toISOString(),
+        ext: c.ext,
+        category: c.category,
+        url: publicUrl(o.key),
+        permanent: false, // not fetched (no customMetadata include) — the public page doesn't show it
+      });
+    }
+    for (const p of res.delimitedPrefixes) folders.add(p);
+    cursor = res.truncated ? res.cursor : undefined;
+  } while (cursor);
+  return { files, folders: [...folders].sort() };
+}
+
 /** Full object list for the bucket — the client builds the tree from this. */
 export async function tree(bucket: R2Bucket): Promise<Entry[]> {
   const raws = await listAll(bucket);

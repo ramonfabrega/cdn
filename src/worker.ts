@@ -15,8 +15,18 @@
 import { Hono } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 
+import { folderPage } from "./folder.ts";
 import { DOMAIN, mimeFor, publicUrl } from "./lib/cdn.ts";
-import { createFolder, move, remove, rename, setPermanent, sweep, tree } from "./storage.ts";
+import {
+  createFolder,
+  listFolder,
+  move,
+  remove,
+  rename,
+  setPermanent,
+  sweep,
+  tree,
+} from "./storage.ts";
 
 const COOKIE = "cdn_session";
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -276,8 +286,23 @@ function parseRange(header: string, size: number): { start: number; end: number 
 // Explicit routes above win, so reserved words (/login, /api, …) never shadow a key.
 app.on(["GET", "HEAD"], "/*", async (c) => {
   const key = decodeURIComponent(new URL(c.req.url).pathname.slice(1));
-  if (!key || key.endsWith("/") || key.endsWith("/.keep") || key === ".keep") {
+  if (!key || key.endsWith("/.keep") || key === ".keep") {
     return c.notFound();
+  }
+
+  // Folder share links: …/golf-sim/sfx-family/ renders a public read-only
+  // listing of that prefix — the "natural" link for a set of uploads. Public by
+  // design: every object under it is public anyway; this only reveals sibling
+  // keys within a prefix someone already has. Not edge-cached (mutations can't
+  // purge a folder page), just a short client max-age.
+  if (key.endsWith("/")) {
+    const { files, folders } = await listFolder(c.env.BUCKET, key);
+    // an empty folder still "exists" while its .keep marker does
+    if (!files.length && !folders.length && !(await c.env.BUCKET.head(`${key}.keep`))) {
+      return c.notFound();
+    }
+    const body = c.req.method === "HEAD" ? null : folderPage(key, files, folders);
+    return c.html(body ?? "", 200, { "cache-control": "public, max-age=300" });
   }
 
   const cache = caches.default;
@@ -293,7 +318,13 @@ app.on(["GET", "HEAD"], "/*", async (c) => {
     range: wantsRange ? c.req.raw.headers : undefined,
     onlyIf: c.req.raw.headers,
   });
-  if (!obj) return c.notFound();
+  if (!obj) {
+    // …/golf-sim/sfx-family (no slash, no such object) → the canonical folder
+    // URL when the prefix has content. One cheap probe per would-be 404.
+    const probe = await c.env.BUCKET.list({ prefix: `${key}/`, limit: 1 });
+    if (probe.objects.length) return c.redirect(`${new URL(c.req.url).pathname}/`, 301);
+    return c.notFound();
+  }
 
   const headers = new Headers();
   obj.writeHttpMetadata(headers); // content-type & friends from stored metadata

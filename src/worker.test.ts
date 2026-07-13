@@ -39,10 +39,9 @@ describe("object serving (the CDN)", () => {
     expect((await SELF.fetch(`${BASE}/nope.png`)).status).toBe(404);
   });
 
-  test("hides .keep markers and folder paths", async () => {
+  test("hides .keep markers", async () => {
     await env.BUCKET.put("folder/.keep", "");
     expect((await SELF.fetch(`${BASE}/folder/.keep`)).status).toBe(404);
-    expect((await SELF.fetch(`${BASE}/folder/`)).status).toBe(404);
   });
 
   test(".xml serves a short max-age (mutable pointers like the Sparkle appcast)", async () => {
@@ -55,6 +54,61 @@ describe("object serving (the CDN)", () => {
     await env.BUCKET.put("mux/App.zip", "zipbytes");
     const res = await SELF.fetch(`${BASE}/mux/App.zip`);
     expect(res.headers.get("cache-control")).toBe("public, max-age=86400, s-maxage=3600");
+  });
+});
+
+describe("folder share pages", () => {
+  test("a folder URL lists its files and subfolders (public, no auth)", async () => {
+    await env.BUCKET.put("golf-sim/sfx-family/1.wav", "a");
+    await env.BUCKET.put("golf-sim/sfx-family/2.wav", "bb");
+    await env.BUCKET.put("golf-sim/sfx-family/alt/3.wav", "ccc");
+    const res = await SELF.fetch(`${BASE}/golf-sim/sfx-family/`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    expect(res.headers.get("cache-control")).toBe("public, max-age=300");
+    const html = await res.text();
+    expect(html).toContain("1.wav");
+    expect(html).toContain("2.wav");
+    expect(html).toContain('href="/golf-sim/sfx-family/1.wav"');
+    expect(html).toContain('href="/golf-sim/sfx-family/alt/"'); // subfolder links to its own page
+    expect(html).not.toContain("3.wav"); // one level only — nested files stay behind their folder
+  });
+
+  test("percent-encodes hrefs for keys with spaces/unicode", async () => {
+    await env.BUCKET.put("shots/Screen Shot é.png", "x");
+    const html = await (await SELF.fetch(`${BASE}/shots/`)).text();
+    expect(html).toContain('href="/shots/Screen%20Shot%20%C3%A9.png"');
+  });
+
+  test("hides .keep and renders an empty page for a marker-only folder", async () => {
+    await env.BUCKET.put("empty-folder/.keep", "");
+    const res = await SELF.fetch(`${BASE}/empty-folder/`);
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).not.toContain(".keep");
+    expect(html).toContain("Empty folder");
+  });
+
+  test("404 for a prefix with no objects at all", async () => {
+    expect((await SELF.fetch(`${BASE}/no-such-folder/`)).status).toBe(404);
+  });
+
+  test("missing trailing slash redirects to the folder URL", async () => {
+    await env.BUCKET.put("golf-sim/sfx-family/1.wav", "a");
+    const res = await SELF.fetch(`${BASE}/golf-sim/sfx-family`, { redirect: "manual" });
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("/golf-sim/sfx-family/");
+  });
+
+  test("a plain missing object is still a 404 (no folder probe hit)", async () => {
+    expect((await SELF.fetch(`${BASE}/nope.png`)).status).toBe(404);
+  });
+
+  test("HEAD on a folder URL returns headers, no body", async () => {
+    await env.BUCKET.put("h/x.txt", "x");
+    const res = await SELF.fetch(`${BASE}/h/`, { method: "HEAD" });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("");
   });
 });
 
