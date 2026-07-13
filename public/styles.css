@@ -1004,12 +1004,12 @@ header {
   align-items: stretch;
   min-height: 0;
 }
-/* square: width derives from the (definite) row height via aspect-ratio, so
-   the canvas hugs the circle — centered in whatever the fixed side pane
-   (pinned to the right edge) leaves over */
+/* square: the circle is height-bound, so the box gets width = height (set in
+   px by sizeSun's ResizeObserver — CSS aspect-ratio on a grid item is NOT
+   interoperable: Firefox won't transfer the row height and collapses the
+   column to min-width). Centered in whatever the fixed side pane leaves over. */
 .chart {
   position: relative;
-  aspect-ratio: 1;
   justify-self: center;
   min-height: 380px;
   min-width: 380px;
@@ -1193,7 +1193,6 @@ header {
     grid-template-columns: 1fr;
   }
   .chart {
-    aspect-ratio: auto;
     justify-self: stretch;
     min-width: 0;
     height: clamp(300px, 46vh, 420px);

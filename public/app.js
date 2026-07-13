@@ -960,9 +960,15 @@ function freshDisp() {
 }
 
 // ── layout / paint ──
+// desktop two-column layout: the circle is height-bound, so the chart box is
+// squared here (width = measured height) rather than via CSS aspect-ratio,
+// which Firefox won't resolve on a grid item. The RO on #chart re-fires after
+// the width write, recomputes the same value, and settles.
+const wideMq = matchMedia("(min-width: 901px)");
 function sizeSun() {
   const box = $("#chart");
   if (!box || !sun.canvas) return;
+  box.style.width = wideMq.matches ? `${box.clientHeight}px` : "";
   const r = box.getBoundingClientRect();
   const dpr = devicePixelRatio || 1;
   sun.w = r.width;
