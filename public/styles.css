@@ -43,6 +43,76 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  scrollbar-width: thin; /* non-inherited — set on every scroll container */
+}
+/* slim, quiet scrollbars: a bare theme-aware thumb, no track/arrows/box.
+   scrollbar-color inherits from the root; the thumb rests at an accent-tinted
+   border tone and goes full accent while you're over the pane. */
+html {
+  scrollbar-color: color-mix(in oklch, var(--accent) 25%, var(--line2)) transparent;
+}
+.rail:hover,
+.list:hover,
+.hlist:hover,
+.sbody:hover,
+.pbody:hover {
+  scrollbar-color: var(--accent) transparent;
+}
+
+/* scroll masking (progressive enhancement, à la jhey): once a pane has been
+   scrolled its top edge fades out, and while more content remains below so
+   does the bottom — driven by scroll(self) timelines, inert wherever those
+   are unsupported or the pane doesn't scroll. The gradient layers stop 10px
+   short of the right edge so the scrollbar never fades with the content;
+   the full-cover layer + exclude compositing keeps that column visible. */
+@property --mask-top {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --mask-bot {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@supports (animation-timeline: scroll(self)) {
+  .rail,
+  .hlist {
+    mask-image:
+      linear-gradient(#000, transparent),
+      linear-gradient(to top, #000, transparent),
+      linear-gradient(#000, #000);
+    mask-repeat: no-repeat;
+    mask-position:
+      left top,
+      left bottom,
+      0 0;
+    mask-size:
+      calc(100% - 10px) var(--mask-top),
+      calc(100% - 10px) var(--mask-bot),
+      100% 100%;
+    mask-composite: exclude, exclude;
+    animation:
+      mask-top linear both,
+      mask-bot linear both;
+    animation-timeline: scroll(self), scroll(self);
+    animation-range:
+      0 24px,
+      calc(100% - 24px) 100%;
+  }
+  @keyframes mask-top {
+    to {
+      --mask-top: 44px;
+    }
+  }
+  @keyframes mask-bot {
+    from {
+      --mask-bot: 44px;
+    }
+    to {
+      --mask-bot: 0px;
+    }
+  }
 }
 /* boot guard: no transitions until the first frame paints, so the overlays
    (preview / sheet / menu / scrims) don't animate to their hidden state on load.
@@ -885,8 +955,9 @@ header {
 }
 
 /* ── home / overview (sunburst + ranked list) ── */
-/* min-height:100% + flex:1 on .hgrid = the chart absorbs all leftover viewport;
-   the side list is a capped column, so on big screens only the sunburst grows. */
+/* height:100% (exact, not min-) = the overview IS the viewport box: the page
+   never scrolls, the side list scrolls internally, and the leftover space is a
+   hard bound the sunburst grows into. Only the chart column absorbs extra width. */
 .home {
   padding: 14px 16px 20px;
   display: flex;
@@ -895,7 +966,7 @@ header {
   max-width: 1560px;
   margin: 0 auto;
   width: 100%;
-  min-height: 100%;
+  height: 100%;
 }
 .tiles {
   display: grid;
@@ -1106,9 +1177,9 @@ header {
   margin-bottom: 6px;
 }
 @media (max-width: 900px) {
-  /* stacked layout: back to fixed heights — flex-grow would cram the pieces */
+  /* stacked layout: back to flowing content — the page scrolls again here */
   .home {
-    min-height: 0;
+    height: auto;
   }
   .hgrid {
     flex: none;
