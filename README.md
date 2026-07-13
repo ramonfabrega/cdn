@@ -107,17 +107,65 @@ locally use `bun run dev --remote` (needs `wrangler login`).
 ## Deploy
 
 Live at **https://cdn.ramonfabrega.com** (Worker custom domain — the `routes` entry in
-`wrangler.jsonc`, which replaced R2's custom-domain serving on the bucket). To redeploy:
+`wrangler.jsonc`, which replaced R2's custom-domain serving on the bucket).
 
-```bash
-bun run deploy
-```
+Deploys are **automatic**, via [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/)
+— Cloudflare's own Git CI, connected to `ramonfabrega/dotfiles`. Merge to `master` and the Worker
+ships; open a PR and you get a preview URL. `bun run deploy` still works for an out-of-band push.
 
-- Secrets are one-time (after the first deploy, which must exist before secrets can be set):
-  `wrangler secret put CDN_PASSWORD` / `CDN_SESSION_SECRET` / `CDN_UPLOAD_TOKEN`. The upload token
-  is the `share` CLI's only credential — store the same value in `passage` at
-  `tokens/cdn/upload-token` (filed by app, not provider — it's a bearer we issue, not a CF cred).
-- Adding the route disabled the `*.workers.dev` URL — add `"workers_dev": true` to keep a staging URL.
+### CI (dashboard: Worker → Settings → Builds)
+
+The whole config lives in the Cloudflare dashboard — Workers Builds has no in-repo config file, so
+it is recorded here instead:
+
+| Setting | Value |
+| --- | --- |
+| Root directory (“Path”) | `/cdn` |
+| Build command | `bun install && bun run test` |
+| Deploy command | `npx wrangler deploy` |
+| Non-production branch deploy command | `npx wrangler versions upload` |
+| Production branch | `master` |
+| Builds for non-production branches | enabled |
+| Build watch paths (include) | `cdn/*` |
+| Build caching | enabled |
+
+Mind the two path conventions — they differ, and the dashboard doesn't say so. The **root
+directory** is dashboard-relative and leading-slashed (`/cdn`, matching Cloudflare's own
+`/workers/product-service/` example); the **watch paths** are **repo-root**-relative and bare
+(`cdn/*`). Watch paths are also the thing that makes a Worker-in-a-dotfiles-monorepo viable at all:
+commits touching `bin/`, `claude/`, or anything outside `cdn/` never trigger a build. (Cloudflare's
+`*` matches zero or more characters, `/` included, so `cdn/*` covers `cdn/src/**` too.)
+
+The test suite runs as part of the build command, so a red vitest blocks the deploy. It
+deliberately does **not** run `biome check`: `public/app.js` + `public/styles.css` are already
+failing lint, and that debt shouldn't gate deploys — fix them, then add it.
+
+Build watch paths, caching, and the rest are only editable **after** the repo is connected (the
+connect modal doesn't show them). Connecting does not build anything retroactively — the first
+build needs a fresh commit.
+
+### Previews
+
+A PR builds a **version** rather than a deployment: uploaded, addressable, but serving no traffic.
+Cloudflare comments two URLs on the PR — a per-commit one and a stable
+`<branch>-cdn-explorer.<subdomain>.workers.dev` alias. Requires `"preview_urls": true` in
+`wrangler.jsonc` (there's no `workers.dev` route to inherit it from — the custom domain took it).
+`bun run preview` uploads one by hand.
+
+**A preview shares production's bindings.** Workers has no per-environment binding overrides, so a
+preview version talks to the *live* `cdn` R2 bucket with the *live* secrets — deliberate (an
+explorer with an empty bucket tells you nothing), but it means the delete / move / rename APIs on a
+preview URL hit real objects. The blast radius is bounded by what a version *cannot* do: it never
+answers on `cdn.ramonfabrega.com` and it never runs the cron sweep — only the deployed version
+does. The `CDN_PASSWORD` gate covers previews exactly as it covers prod.
+
+### Secrets
+
+One-time, and shared by every version incl. previews (after the first deploy, which must exist
+before secrets can be set): `wrangler secret put CDN_PASSWORD` / `CDN_SESSION_SECRET` /
+`CDN_UPLOAD_TOKEN`. The upload token is the `share` CLI's only credential — store the same value in
+`passage` at `tokens/cdn/upload-token` (filed by app, not provider — it's a bearer we issue, not a
+CF cred).
 
 ## Conventions
 

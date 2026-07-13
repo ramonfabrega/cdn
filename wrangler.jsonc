@@ -21,6 +21,13 @@
   // (replaces R2's custom-domain serving). wrangler provisions the DNS + cert.
   "routes": [{ "pattern": "cdn.ramonfabrega.com", "custom_domain": true }],
 
+  // Branch previews (Workers Builds runs `versions upload` off master) get a URL at
+  // <branch>-cdn-explorer.<subdomain>.workers.dev. Off by default since wrangler 4.34,
+  // and doubly so here: taking the custom domain dropped the workers.dev route, which
+  // is what preview URLs hang off. A preview shares this config's bindings — same live
+  // R2 bucket, same secrets — but never owns the custom domain or runs the cron.
+  "preview_urls": true,
+
   // Font bytes for the og:image cards (src/card.ts) — bundled as raw ArrayBuffers.
   // takumi's WASM module needs no rule: wrangler resolves the package's `workerd`
   // export condition and compiles the .wasm import natively.

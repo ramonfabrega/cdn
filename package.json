@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "preview": "wrangler versions upload",
     "types": "wrangler types",
     "test": "vitest run"
   },
