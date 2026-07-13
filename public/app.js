@@ -857,9 +857,7 @@ function buildSlots(root) {
     .map((d) => ({ k: `${d.name}/`, size: d.total }))
     .concat(root.files.map((f) => ({ k: f.key, size: f.size })))
     .sort((a, b) => b.size - a.size);
-  const m = new Map();
-  tops.forEach((t, i) => m.set(t.k, i % SLOTS_D.length));
-  return m;
+  return new Map(tops.map((t, i) => [t.k, i % SLOTS_D.length]));
 }
 const topOf = (key) => {
   const i = key.indexOf("/");

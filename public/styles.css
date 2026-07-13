@@ -79,8 +79,7 @@ html {
   .rail,
   .hlist {
     mask-image:
-      linear-gradient(#000, transparent),
-      linear-gradient(to top, #000, transparent),
+      linear-gradient(#000, transparent), linear-gradient(to top, #000, transparent),
       linear-gradient(#000, #000);
     mask-repeat: no-repeat;
     mask-position:

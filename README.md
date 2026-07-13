@@ -104,6 +104,9 @@ locally use `bun run dev --remote` (needs `wrangler login`).
 - `bunx biome check --write .` — format + lint (`biome.jsonc`).
 - One tsconfig (`tsconfig.json`, Worker types covering `src/`); `bin/share` is `@ts-nocheck` Bun glue, fully self-contained (imports nothing from cdn).
 
+To **ship**: branch → PR (CI runs the tests and comments a preview URL you can click) → merge to
+`master` (CI deploys). No manual `deploy` step in the normal loop — see below.
+
 ## Deploy
 
 Live at **https://cdn.ramonfabrega.com** (Worker custom domain — the `routes` entry in
@@ -121,7 +124,7 @@ it is recorded here instead:
 | Setting | Value |
 | --- | --- |
 | Root directory (“Path”) | `/cdn` |
-| Build command | `bun install && bun run test` |
+| Build command | `bun install && bunx biome check . && bun run test` |
 | Deploy command | `npx wrangler deploy` |
 | Non-production branch deploy command | `npx wrangler versions upload` |
 | Production branch | `master` |
@@ -136,9 +139,8 @@ directory** is dashboard-relative and leading-slashed (`/cdn`, matching Cloudfla
 commits touching `bin/`, `claude/`, or anything outside `cdn/` never trigger a build. (Cloudflare's
 `*` matches zero or more characters, `/` included, so `cdn/*` covers `cdn/src/**` too.)
 
-The test suite runs as part of the build command, so a red vitest blocks the deploy. It
-deliberately does **not** run `biome check`: `public/app.js` + `public/styles.css` are already
-failing lint, and that debt shouldn't gate deploys — fix them, then add it.
+Lint and the test suite both run as part of the build command, so a red `biome` or a red `vitest`
+blocks the deploy — nothing reaches `cdn.ramonfabrega.com` that wouldn't pass locally.
 
 Build watch paths, caching, and the rest are only editable **after** the repo is connected (the
 connect modal doesn't show them). Connecting does not build anything retroactively — the first
@@ -147,10 +149,11 @@ build needs a fresh commit.
 ### Previews
 
 A PR builds a **version** rather than a deployment: uploaded, addressable, but serving no traffic.
-Cloudflare comments two URLs on the PR — a per-commit one and a stable
-`<branch>-cdn-explorer.<subdomain>.workers.dev` alias. Requires `"preview_urls": true` in
-`wrangler.jsonc` (there's no `workers.dev` route to inherit it from — the custom domain took it).
-`bun run preview` uploads one by hand.
+Cloudflare comments two URLs on the PR — a per-commit one, and a stable per-branch alias at
+`<branch>-cdn-explorer.ramonfabrega0.workers.dev` that survives further pushes to the branch. Both
+need `"preview_urls": true` in `wrangler.jsonc`: preview URLs hang off the `workers.dev` subdomain,
+which this Worker gave up when it took the custom domain, so without the flag the link resolves to
+a "preview URLs are disabled" page rather than the app. `bun run preview` uploads one by hand.
 
 **A preview shares production's bindings.** Workers has no per-environment binding overrides, so a
 preview version talks to the *live* `cdn` R2 bucket with the *live* secrets — deliberate (an
