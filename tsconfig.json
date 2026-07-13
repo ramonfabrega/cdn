@@ -11,6 +11,10 @@
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
+    // Server pages (src/*.tsx) render with hono/jsx — esbuild (wrangler + vitest)
+    // reads these same fields, so there's no separate JSX build config anywhere.
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
     "noEmit": true,
     "allowJs": false,
     "types": ["./worker-configuration.d.ts", "@cloudflare/vitest-pool-workers/types"],
@@ -18,6 +22,6 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": false
   },
-  "include": ["src/**/*.ts", "worker-configuration.d.ts", "vitest.config.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "worker-configuration.d.ts", "vitest.config.ts"],
   "exclude": ["node_modules"]
 }

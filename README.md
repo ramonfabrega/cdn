@@ -17,13 +17,16 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
 
 - **`src/lib/cdn.ts`** — pure, Worker-internal helpers: MIME map, key→ext classification, and the
   public-URL builder. Zero deps, no runtime-specific imports (own `extname`) → trivially testable.
+- **`src/lib/ui.ts`** — shared design tokens + formatters for the server-rendered pages (folder
+  listing, login — and future og:image cards): the OKLCH base palette (mirror of `styles.css`),
+  type-badge hues, `href`/`fmtSize`/`fmtDate`. Pure and dep-free like the rest of `lib/`.
 - **`src/worker.ts`** — the Worker. Hono `<{ Bindings: Env }>`. Gates `/` + `/api/*` (signed
   cookie, **fail-closed** — no `CDN_PASSWORD`, no login); everything else is public.
   `GET /` inlines `index.html`/`styles.css`/`app.js` from the **`ASSETS`** binding into one
   self-contained doc (no FOUC, even on GPRS). `GET|HEAD /<key>` serves the R2 object from
   **`BUCKET`** — Range + conditional (`If-None-Match`) + edge cache (`Cache-Control` + Cache API).
   **Folder share links**: `GET /<prefix>/` renders a public read-only listing of that prefix
-  (via `src/folder.ts` — breadcrumbs, type badges, subfolder links; `noindex`, `max-age=300`,
+  (via `src/folder.tsx` — breadcrumbs, type badges, subfolder links; `noindex`, `max-age=300`,
   never edge-cached so mutations show within minutes), and `/<prefix>` without the slash 301s to
   it when the prefix has content — the "natural" link for a set of uploads
   (`…/golf-sim/sfx-family/`) just works. Public by design: the objects under a prefix are public
@@ -34,6 +37,9 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
   CDN_UPLOAD_TOKEN` (the `share` CLI), scoped to upload alone; the destructive APIs still need the
   cookie. Every write purges the touched keys from the edge cache (Cache API), so overwriting a key
   serves the new bytes immediately. A `scheduled` handler runs the daily expiry sweep.
+- **`src/folder.tsx`** / **`src/login.tsx`** — the server-rendered pages (folder listing, sign-in)
+  as `hono/jsx` components (auto-escaped; string out via `folderPage()`/`loginPage()`). esbuild
+  (wrangler + vitest) transpiles `.tsx` from the tsconfig `jsx` fields — no build step, no new deps.
 - **`src/storage.ts`** — R2 ops over the **`BUCKET`** binding: `tree()`, `listFolder` (one
   delimited level, feeds the public folder pages), `createFolder`, `move`, `rename`, `remove`,
   `setPermanent`, `sweep`. Each takes the bucket (per-request `env`).
@@ -119,10 +125,14 @@ bun run deploy
 Worker is deployed. Still to do:
 
 1. **Retire the old R2 S3 keys** — revoke the R2 access key in the Cloudflare dashboard and drop
-   the three `passage` secrets under `tokens/cloudflare/personal/r2-cdn/` (nothing signs S3
-   anymore; the live upload path has been smoke-tested).
-2. Clear the dev fixture from the live bucket (~23 objects across `cuanto/ test/ dotfiles/
-   screenshots/` + root).
+   the two `passage` secrets under `tokens/cloudflare/personal/r2-cdn/` (nothing signs S3
+   anymore; the live upload path has been smoke-tested). Revoke first, then `passage rm` — don't
+   destroy the local copy of a still-valid key.
+2. Clear the last dev fixtures: `test/perm.txt`, `test/probe.xml`, `test/x.txt` (perm.txt is
+   flagged permanent, so the sweep will never take it — delete via the explorer or
+   `wrangler r2 object delete cdn/test/… --remote`). The rest of the old fixture is gone: the
+   daily sweep already ate `dotfiles/` and `screenshots/`, and `cuanto/` now holds live share
+   links (real work product — do **not** wipe it).
 
 Nice-to-haves, not blockers: prefix-scoped TTLs (e.g. an ephemeral `24h/` namespace), a
 multi-select bulk bar. mux's Sparkle artifacts (`mux/appcast.xml`, `mux/MuxMac-latest.zip`) had
@@ -132,21 +142,11 @@ an installed app updating after a months-long release gap still finds them.
 
 ## Next arcs (prep — pick up fresh)
 
-Two independent arcs sketched after the folder-pages/Overview work (#8). Facts below were
-verified at the time of writing; the shapes are starting points, not commitments — re-verify
-library APIs at pickup.
-
-**Arc 1 — server pages to JSX (`hono/jsx`).** More shared DNA between the server-rendered
-surfaces without a framework or added build step.
-
-- Fact: wrangler bundles the Worker with esbuild, which transpiles `.tsx` out of the box, and
-  hono (already a dep) ships `hono/jsx` for server rendering — zero new deps; tsconfig gains
-  `"jsx": "react-jsx"`, `"jsxImportSource": "hono/jsx"`.
-- Scope idea: `src/folder.ts` → `.tsx` components; `loginPage()` in worker.ts likewise; pull the
-  shared tokens (OKLCH palette, badge hues, `fmtSize`/`fmtDate`) into one module all server pages
-  import — and which future takumi cards (also JSX, see arc 2) can share.
-- Non-goal: the client explorer (`public/app.js`) stays vanilla/zero-build — the inline-one-doc
-  boot and static skeleton are load-bearing (single-paint rule above).
+Sketched after the folder-pages/Overview work (#8). Facts below were verified at the time of
+writing; the shapes are starting points, not commitments — re-verify library APIs at pickup.
+(Arc 1 — server pages to `hono/jsx` — shipped: `src/folder.tsx`, `src/login.tsx`, shared tokens
+in `src/lib/ui.ts`, zero new deps. The client explorer stayed vanilla/zero-build — the
+inline-one-doc boot and static skeleton are load-bearing, per the single-paint rule above.)
 
 **Arc 2 — og:image / richer previews (takumi).** Raw file URLs already unfurl natively in
 iMessage/Slack via content-type (images, video). Folder listing pages serve HTML with no `og:`
