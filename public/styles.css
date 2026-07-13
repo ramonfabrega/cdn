@@ -1086,7 +1086,7 @@ header {
 .hrow {
   position: relative;
   display: grid;
-  grid-template-columns: 14px 1fr 46px 72px;
+  grid-template-columns: 14px 1fr 46px 72px 20px;
   align-items: center;
   gap: 9px;
   padding: 7px 8px 9px;
@@ -1127,6 +1127,38 @@ header {
   color: var(--dim);
   text-align: right;
 }
+/* ⋯ keeps a reserved column (never a layout shift on hover) and only inks in on hover */
+.hrow .more {
+  justify-self: end;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--faint);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.hrow:hover .more,
+.hrow .more:focus-visible {
+  opacity: 1;
+}
+.hrow .more:hover {
+  color: var(--ink);
+  background: var(--well);
+}
+/* no hover on touch — the ⋯ is the only way in there, so it always shows */
+@media (hover: none) {
+  .hrow .more {
+    opacity: 1;
+  }
+}
+
 /* proportional bar — scaleX (compositor-only), never width (layout) */
 .hrow .hbar {
   position: absolute;

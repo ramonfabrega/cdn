@@ -51,6 +51,7 @@ const icon = (n) =>
   `<svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
 
 let objects = [];
+let domain = location.host; // real value arrives with /api/tree
 let q = "";
 const HOME = "__home__";
 let scope = HOME; // HOME = overview, null = All files, "__root__" = root, "cuanto/" = a folder prefix
@@ -65,6 +66,13 @@ const esc = (s) =>
   );
 const isMarker = (k) => k.endsWith("/") || k.endsWith("/.keep") || k === ".keep";
 const byKey = (k) => objects.find((o) => o.key === k);
+// A trailing slash is what makes a key a folder everywhere in this app: the rail's
+// scope, the overview's dirs, and the public share page all agree on that shape.
+const isDirKey = (k) => k.endsWith("/");
+const folderUrl = (prefix) =>
+  `https://${domain}/${prefix.split("/").filter(Boolean).map(encodeURIComponent).join("/")}/`;
+// Public URL of any key — the file's own for a file, the share page for a folder.
+const urlFor = (k) => (isDirKey(k) ? folderUrl(k) : byKey(k)?.url);
 const fmtSize = (b) => {
   if (!Number.isFinite(b)) return "—";
   const u = ["B", "KB", "MB", "GB", "TB"];
@@ -151,6 +159,7 @@ async function load() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.status);
     objects = data.objects || [];
+    domain = data.domain || domain;
     homeInvalidate(); // bucket contents changed → rebuild the overview's tree/slots
   } catch (e) {
     railEl.innerHTML = "";
@@ -331,7 +340,7 @@ railEl.addEventListener("click", (e) => {
   if (fmore) {
     e.stopPropagation();
     const r = fmore.getBoundingClientRect();
-    openMenu(fmore.closest(".sitem").dataset.scope, r.right, r.bottom, true);
+    openMenu(fmore.closest(".sitem").dataset.scope, r.right, r.bottom);
     return;
   }
   const it = e.target.closest(".sitem");
@@ -344,7 +353,7 @@ railEl.addEventListener("contextmenu", (e) => {
   const it = e.target.closest(".sitem");
   if (!it || it.dataset.scope === "__all__" || it.dataset.scope === "__root__") return;
   e.preventDefault();
-  openMenu(it.dataset.scope, e.clientX, e.clientY, true);
+  openMenu(it.dataset.scope, e.clientX, e.clientY);
 });
 listEl.addEventListener("click", (e) => {
   const sortEl = e.target.closest("[data-sort]");
@@ -375,15 +384,17 @@ listEl.addEventListener("contextmenu", (e) => {
 });
 
 // ── context menu ──
-function openMenu(key, x, y, isFolder = false) {
-  menu.innerHTML = isFolder
-    ? `<button type="button" data-act="move">${icon("move")}Move…</button>
-    <button type="button" data-act="rename">${icon("rename")}Rename…</button>
-    <button type="button" class="del" data-act="delete">${icon("delete")}Delete</button>`
-    : `<button type="button" data-act="copy">${icon("link")}Copy link</button>
+// One menu for every target — file rows, rail folders, overview rows, chart wedges.
+// Folders share the file actions now that they have a public share page; only the
+// ∞ expiry flag is per-file, so that's the single line that differs.
+function openMenu(key, x, y) {
+  const perm = isDirKey(key)
+    ? ""
+    : `<button type="button" data-act="permanent">${icon("infinity")}${byKey(key)?.permanent ? "Let expire (30d)" : "Make permanent"}</button>`;
+  menu.innerHTML = `<button type="button" data-act="copy">${icon("link")}Copy link</button>
     <button type="button" data-act="open">${icon("external")}Open</button>
     <hr>
-    <button type="button" data-act="permanent">${icon("infinity")}${byKey(key)?.permanent ? "Let expire (30d)" : "Make permanent"}</button>
+    ${perm}
     <button type="button" data-act="move">${icon("move")}Move…</button>
     <button type="button" data-act="rename">${icon("rename")}Rename…</button>
     <button type="button" class="del" data-act="delete">${icon("delete")}Delete</button>`;
@@ -404,11 +415,12 @@ function closeMenu() {
 }
 function doAct(action, key) {
   const o = byKey(key);
-  if ((action === "copy" || action === "open") && !o) return;
+  const url = urlFor(key);
+  if ((action === "copy" || action === "open") && !url) return;
   if (action === "copy") {
-    navigator.clipboard.writeText(o.url);
+    navigator.clipboard.writeText(url);
     toast("Link copied");
-  } else if (action === "open") window.open(o.url, "_blank", "noopener");
+  } else if (action === "open") window.open(url, "_blank", "noopener");
   else if (action === "permanent") {
     if (!o) return;
     mutate(
@@ -1283,11 +1295,16 @@ function renderHlist() {
         : r.rest
           ? ""
           : ` data-file="${esc(r.key)}"`;
+      // the "smaller items" rest bucket is an aggregate, not a key — nothing to act on
+      const more = r.rest
+        ? "<span></span>"
+        : `<button type="button" class="more" data-more aria-label="actions">⋯</button>`;
       return `<div class="hrow${r.rest ? " rest" : ""}" data-id="${esc(r.id)}"${act}>
       <span class="dot" style="background:${col}"></span>
       <span class="hnm">${esc(r.name)}${r.isDir ? "/" : ""}</span>
       <span class="hpc">${pct < 0.1 ? "<0.1" : pct.toFixed(pct < 10 ? 1 : 0)}%</span>
       <span class="hsz">${fmtSize(r.size)}</span>
+      ${more}
       <i class="hbar" style="background:${col};transform:scaleX(${(r.size / max).toFixed(4)})"></i>
     </div>`;
     })
@@ -1345,7 +1362,16 @@ function bindHomeEvents() {
       if (o) openPreview(o);
     }
   });
+  canvas.addEventListener("contextmenu", (ev) => {
+    const r = canvas.getBoundingClientRect();
+    const hit = sunHit(ev.clientX - r.left, ev.clientY - r.top);
+    if (!hit?.mark || hit.mark.rest) return;
+    ev.preventDefault();
+    showTip(null); // the menu takes over — two floating cards over one wedge is noise
+    openMenu(hit.mark.key, ev.clientX, ev.clientY);
+  });
   const side = $(".hside");
+  const rowKey = (row) => row.dataset.dir || row.dataset.file;
   side.addEventListener("click", (ev) => {
     const crumb = ev.target.closest("[data-hs]");
     if (crumb) return setHomeScope(crumb.dataset.hs);
@@ -1356,11 +1382,24 @@ function bindHomeEvents() {
     }
     const row = ev.target.closest(".hrow");
     if (!row) return;
+    const more = ev.target.closest("[data-more]");
+    if (more) {
+      ev.stopPropagation();
+      const r = more.getBoundingClientRect();
+      openMenu(rowKey(row), r.right, r.bottom);
+      return;
+    }
     if (row.dataset.dir) setHomeScope(row.dataset.dir);
     else if (row.dataset.file) {
       const o = byKey(row.dataset.file);
       if (o) openPreview(o);
     }
+  });
+  side.addEventListener("contextmenu", (ev) => {
+    const row = ev.target.closest(".hrow");
+    if (!row || !rowKey(row)) return;
+    ev.preventDefault();
+    openMenu(rowKey(row), ev.clientX, ev.clientY);
   });
   side.addEventListener("mouseover", (ev) => {
     const row = ev.target.closest(".hrow");
