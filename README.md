@@ -118,7 +118,7 @@ locally use `bun run dev --remote` (needs `wrangler login`).
   build is a formality. (`bun run test`, never `bun test` — that's bun's own runner, not vitest.)
 - One tsconfig (`tsconfig.json`, Worker types covering `src/`); `bin/share` is `@ts-nocheck` Bun glue, fully self-contained (imports nothing from cdn).
 
-To **ship**: branch → PR (CI runs the tests and comments a preview URL you can click) → merge to
+To **ship**: branch → PR (CI lints + tests, and comments a preview URL you can click) → merge to
 `master` (CI deploys). No manual `deploy` step in the normal loop — see below.
 
 ## Deploy
@@ -209,21 +209,20 @@ CF cred).
   in place every release); everything else `max-age=86400, s-maxage=3600` (a day in clients, an
   hour per edge POP). Every write purges its keys from the local POP's cache, so re-upload → fetch
   is immediately fresh; other POPs age out within the hour.
+- **Mutate through the Worker, not around it.** The cache purge lives in the Worker, so it only
+  fires for writes that go through it (`/api/*`, the explorer, `share`). Delete an object with
+  `wrangler r2 object delete` or the R2 dashboard and the bytes vanish from R2 while the **public
+  URL keeps serving a cached copy for up to an hour** — the folder page 404s but the object still
+  200s, which looks like a ghost. Verified: same key with a `?cb=1` cache-buster 404s immediately.
+  Use the explorer to delete; reach for wrangler only when you then don't mind the wait (or purge
+  the URL by hand in the zone's Caching → Purge Custom URLs).
 
 ## Remaining
 
-`CDN_UPLOAD_TOKEN` is set on the live Worker + in `passage` (`tokens/cdn/upload-token`) and the
-Worker is deployed. Still to do:
-
-1. **Retire the old R2 S3 keys** — revoke the R2 access key in the Cloudflare dashboard and drop
-   the two `passage` secrets under `tokens/cloudflare/personal/r2-cdn/` (nothing signs S3
-   anymore; the live upload path has been smoke-tested). Revoke first, then `passage rm` — don't
-   destroy the local copy of a still-valid key.
-2. Clear the last dev fixtures: `test/perm.txt`, `test/probe.xml`, `test/x.txt` (perm.txt is
-   flagged permanent, so the sweep will never take it — delete via the explorer or
-   `wrangler r2 object delete cdn/test/… --remote`). The rest of the old fixture is gone: the
-   daily sweep already ate `dotfiles/` and `screenshots/`, and `cuanto/` now holds live share
-   links (real work product — do **not** wipe it).
+The S3 era is fully retired: the `r2-cdn` R2 token is revoked and its two `passage` secrets are
+gone, so `CDN_UPLOAD_TOKEN` (`tokens/cdn/upload-token`) is the only credential that touches the
+bucket, and the Worker is the only thing that writes to it. The dev fixtures are cleared too —
+`test/` is empty, and the bucket now holds only real work product (`cuanto/` — do **not** wipe it).
 
 Nice-to-haves, not blockers: prefix-scoped TTLs (e.g. an ephemeral `24h/` namespace), a
 multi-select bulk bar. mux's Sparkle artifacts (`mux/appcast.xml`, `mux/MuxMac-latest.zip`) had
