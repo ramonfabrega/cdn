@@ -153,15 +153,33 @@ function railItems() {
 }
 
 // ── data ──
-// The boot skeleton is painted by the inline script in index.html (so it's in the
-// first paint); load() just fetches and swaps in real data — no skeleton here.
+// The boot skeleton is static HTML in index.html (first paint). The Worker STREAMS
+// that skeleton first, then flushes the file list as window.__tree in the same
+// response once R2 resolves (see GET / in worker.ts) — so first render needs no
+// /api/tree round-trip: init() applies the embedded data directly. load() re-fetches
+// for post-mutation refreshes, and is init()'s fallback if the embed is missing.
+function apply(objs, booting) {
+  objects = objs || [];
+  homeInvalidate(); // bucket contents changed → rebuild the overview's tree/slots
+  // deep-link: on first boot only, restore the view the hash points at
+  // (e.g. /#/golf-sim/sfx-family/); later renders (post-mutation) just re-render.
+  if (booting && location.hash && location.hash !== "#/") applyHash();
+  else render();
+}
+function init() {
+  if (Array.isArray(window.__tree)) {
+    apply(window.__tree, true); // render straight from the embedded list — no network wait
+    load.booted = true;
+    return;
+  }
+  load(); // fallback: stream carried no data (shouldn't happen) → fetch the old way
+}
 async function load() {
+  let data;
   try {
     const res = await fetch("/api/tree");
-    const data = await res.json();
+    data = await res.json();
     if (!res.ok) throw new Error(data.error || res.status);
-    objects = data.objects || [];
-    homeInvalidate(); // bucket contents changed → rebuild the overview's tree/slots
   } catch (e) {
     railEl.innerHTML = "";
     scopeEl.textContent = "";
@@ -169,10 +187,7 @@ async function load() {
     listEl.innerHTML = `<div class="state">Error: ${esc(e.message)}</div>`;
     return;
   }
-  // deep-link: on first boot only, restore the view the hash points at
-  // (e.g. /#/golf-sim/sfx-family/); later loads (post-mutation) just re-render.
-  if (!load.booted && location.hash && location.hash !== "#/") applyHash();
-  else render();
+  apply(data.objects, !load.booted);
   load.booted = true;
 }
 async function mutate(url, payload, okMsg) {
@@ -1499,7 +1514,7 @@ function applyHash() {
 }
 window.addEventListener("hashchange", applyHash);
 
-load();
+init();
 
 // re-enable transitions once the first frame has painted (the hidden overlays are
 // now settled off-screen, so they won't animate). double rAF = "after next paint".

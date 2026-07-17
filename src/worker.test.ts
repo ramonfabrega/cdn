@@ -266,3 +266,48 @@ describe("auth gate", () => {
     expect(await login.text()).toContain("password");
   });
 });
+
+describe("explorer root (streamed shell + embedded tree)", () => {
+  const PW = "test-password"; // matches vitest.config.ts
+  // Sign in the same way the login form does, and hand back the session cookie
+  // for a follow-up authenticated GET.
+  async function sessionCookie() {
+    const res = await SELF.fetch(`${BASE}/login`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `password=${encodeURIComponent(PW)}`,
+    });
+    expect(res.status).toBe(302);
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain("cdn_session=");
+    return setCookie.split(";")[0]; // "cdn_session=<signed>"
+  }
+
+  test("GET / streams the inlined shell with the file list embedded as window.__tree", async () => {
+    await env.BUCKET.put("root-doc.txt", "hi", { httpMetadata: { contentType: "text/plain" } });
+    const res = await SELF.fetch(`${BASE}/`, { headers: { cookie: await sessionCookie() } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+
+    const html = await res.text();
+    // The data rides along on the same response — no /api/tree round-trip on boot.
+    expect(html).toContain("window.__tree=");
+    expect(html).toContain("root-doc.txt");
+    // css + js are inlined (one self-contained document), not left as subrequests.
+    expect(html).toContain("<style>");
+    expect(html).not.toContain('href="/styles.css"');
+    expect(html).toContain('<script type="module">');
+    expect(html).not.toContain('src="/app.js"');
+  });
+
+  test("embedded tree is XSS-safe: a '<' in a key can't break out of the <script>", async () => {
+    await env.BUCKET.put("x/</script><b>.txt", "x");
+    const res = await SELF.fetch(`${BASE}/`, { headers: { cookie: await sessionCookie() } });
+    const html = await res.text();
+    // The raw closing tag must not appear inside the embedded blob — `<` is escaped.
+    expect(html).toContain("window.__tree=");
+    expect(html).not.toContain("</script><b>");
+    expect(html).toContain("\\u003c/script>");
+  });
+});

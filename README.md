@@ -23,7 +23,9 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
 - **`src/worker.ts`** — the Worker. Hono `<{ Bindings: Env }>`. Gates `/` + `/api/*` (signed
   cookie, **fail-closed** — no `CDN_PASSWORD`, no login); everything else is public.
   `GET /` inlines `index.html`/`styles.css`/`app.js` from the **`ASSETS`** binding into one
-  self-contained doc (no FOUC, even on GPRS). `GET|HEAD /<key>` serves the R2 object from
+  self-contained doc (no FOUC, even on GPRS), **streamed** in two flushes: the shell + skeleton
+  first (paints before R2 is queried), then the file list embedded as `window.__tree` so the
+  client renders with no `/api/tree` round-trip on boot. `GET|HEAD /<key>` serves the R2 object from
   **`BUCKET`** — Range + conditional (`If-None-Match`) + edge cache (`Cache-Control` + Cache API).
   **Folder share links**: `GET /<prefix>/` renders a public read-only listing of that prefix
   (via `src/folder.tsx` — breadcrumbs, type badges, subfolder links; `noindex`, `max-age=300`,
@@ -90,8 +92,10 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
   `/<prefix>/` share page) and `/#f/<prefix>/` a scoped file list; drills push history entries,
   so **Back is an animated zoom-out** and deep links restore on load.
   First paint is a **static-HTML skeleton** baked into `index.html` (sized to the loaded UI) so it
-  paints in the same frame as the shell — **never built by JS** (that reintroduces a 3-paint flash);
-  `app.js` overwrites `#rail`/`#list` with real data on load.
+  paints in the same frame as the shell — **never built by JS** (that reintroduces a 3-paint flash).
+  The Worker streams that skeleton first, then flushes the file list inline as `window.__tree`, so
+  `app.js` renders straight from the embed with no `/api/tree` round-trip on boot (`init()` reads it;
+  `load()` re-fetches only after a mutation).
 
 ## Run locally
 
@@ -259,7 +263,7 @@ these are *decisions/features not yet made*, distinct from the operational clean
 
 Both post-#8 arcs have shipped: **arc 1** — server pages to `hono/jsx` (`src/folder.tsx`,
 `src/login.tsx`, shared tokens in `src/lib/ui.ts`, zero new deps; the client explorer stayed
-vanilla/zero-build — the inline-one-doc boot and static skeleton are load-bearing, per the
+vanilla/zero-build — the streamed-shell boot and static skeleton are load-bearing, per the
 single-paint rule above) — and **arc 2** — og:image unfurl cards (`src/card.ts` + the `/.og/`
 route + meta on folder pages; raw file URLs already unfurled natively via content-type, folder
 pages were the gap). Ideas deliberately left on the table: cards (or pretty file pages) for

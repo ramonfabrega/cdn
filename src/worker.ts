@@ -14,6 +14,7 @@
 
 import { Hono } from "hono";
 import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
+import { stream } from "hono/streaming";
 import { ImageResponse } from "takumi-js/response";
 
 import { CARD_FONTS, folderCard } from "./card.ts";
@@ -251,19 +252,24 @@ app.post("/api/permanent", async (c) => {
   }
 });
 
-// ── explorer UI ─────────────────────────────────────────────────────────────
-// Serve the whole explorer as ONE self-contained document: css + js are inlined
-// into index.html so the first (and only) paint is fully styled and interactive.
-// No render-blocking subrequest ⇒ no flash of unstyled content, even on GPRS.
-// The three files live in public/ (the ASSETS binding); we read + compose them
-// here. assets.run_worker_first=true keeps them behind the auth gate.
-function inlineOnce(html: string, marker: string, replacement: string): string {
-  if (!html.includes(marker)) throw new Error(`inline marker missing: ${marker}`);
-  return html.replace(marker, () => replacement); // fn replacer: css/js contain `$`
-}
-// hostname is ignored by the ASSETS binding — only the pathname matters.
+// ── explorer UI (streamed shell + embedded data) ──────────────────────────────
+// One self-contained document (css + js inlined ⇒ no render-blocking subrequest,
+// no FOUC), but STREAMED in two flushes so R2 latency never delays first paint:
+//   1. shell + static skeleton (css inlined into <head>) flushes immediately, so
+//      the skeleton paints before R2 is even queried.
+//   2. once tree() resolves, the file list rides along as window.__tree, followed
+//      by the inlined app.js — so app.js renders from embedded data with NO
+//      /api/tree round-trip (see init() in app.js).
+// The Worker streams only the STATIC skeleton + a data blob; it never renders a
+// row, so app.js stays the one and only renderer. assets.run_worker_first=true
+// keeps these reads behind the auth gate. hostname is ignored by ASSETS — only
+// the pathname matters.
 const readAsset = (env: Env, path: string) =>
   env.ASSETS.fetch(new Request(`https://assets.local${path}`)).then((r) => r.text());
+
+// Split index.html at the app.js tag: everything before it (shell + skeleton)
+// flushes first; the data blob + inlined app.js stream in after R2 resolves.
+const JS_TAG = '<script type="module" src="/app.js"></script>';
 
 app.get("/", async (c) => {
   const [html, css, js] = await Promise.all([
@@ -271,12 +277,22 @@ app.get("/", async (c) => {
     readAsset(c.env, "/styles.css"),
     readAsset(c.env, "/app.js"),
   ]);
-  const page = inlineOnce(
-    inlineOnce(html, '<link rel="stylesheet" href="/styles.css">', `<style>${css}</style>`),
-    '<script type="module" src="/app.js"></script>',
-    `<script type="module">${js}</script>`
-  );
-  return c.html(page);
+  const idx = html.indexOf(JS_TAG);
+  if (idx === -1) throw new Error(`inline marker missing: ${JS_TAG}`);
+  const shell = html
+    .slice(0, idx)
+    .replace('<link rel="stylesheet" href="/styles.css">', () => `<style>${css}</style>`);
+  const tail = html.slice(idx + JS_TAG.length); // "\n</body>\n</html>\n"
+
+  c.header("content-type", "text/html; charset=utf-8");
+  return stream(c, async (s) => {
+    await s.write(shell); // shell + skeleton → paints now, before R2 is queried
+    const objects = await tree(c.env.BUCKET, new URL(c.req.url).origin);
+    const json = JSON.stringify(objects).replace(/</g, "\\u003c"); // safe inside <script>
+    await s.write(`<script>window.__tree=${json}</script>`);
+    await s.write(`<script type="module">${js}</script>`);
+    await s.write(tail);
+  });
 });
 
 // ── og:image cards ────────────────────────────────────────────────────────────
