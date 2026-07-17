@@ -51,9 +51,15 @@ async function listAll(bucket: R2Bucket, prefix = ""): Promise<RawObj[]> {
 
 /** One level of a folder: files directly under `prefix` + the immediate
     subfolder prefixes (delimited list). `.keep` markers are hidden. This feeds
-    the PUBLIC folder share pages, so it never lists recursively. */
+    the PUBLIC folder share pages, so it never lists recursively. `origin` is the
+    requesting host's URL.origin — Entry.url must stay on the host that asked
+    (custom domain, preview build, dev), see publicUrl. */
 export type FolderListing = { files: Entry[]; folders: string[] };
-export async function listFolder(bucket: R2Bucket, prefix: string): Promise<FolderListing> {
+export async function listFolder(
+  bucket: R2Bucket,
+  prefix: string,
+  origin: string
+): Promise<FolderListing> {
   const files: Entry[] = [];
   const folders = new Set<string>();
   let cursor: string | undefined;
@@ -68,7 +74,7 @@ export async function listFolder(bucket: R2Bucket, prefix: string): Promise<Fold
         lastModified: o.uploaded.toISOString(),
         ext: c.ext,
         category: c.category,
-        url: publicUrl(o.key),
+        url: publicUrl(origin, o.key),
         permanent: false, // not fetched (no customMetadata include) — the public page doesn't show it
       });
     }
@@ -89,8 +95,9 @@ export async function listSubtree(bucket: R2Bucket, prefix: string): Promise<Sub
     .map((o) => ({ key: o.key, size: o.size }));
 }
 
-/** Full object list for the bucket — the client builds the tree from this. */
-export async function tree(bucket: R2Bucket): Promise<Entry[]> {
+/** Full object list for the bucket — the client builds the tree from this.
+    `origin` as in listFolder: urls stay on the requesting host. */
+export async function tree(bucket: R2Bucket, origin: string): Promise<Entry[]> {
   const raws = await listAll(bucket);
   return raws.map((o) => {
     const c = classify(o.key);
@@ -100,7 +107,7 @@ export async function tree(bucket: R2Bucket): Promise<Entry[]> {
       lastModified: o.lastModified,
       ext: c.ext,
       category: c.category,
-      url: publicUrl(o.key),
+      url: publicUrl(origin, o.key),
       permanent: o.permanent,
     };
   });

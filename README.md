@@ -31,6 +31,11 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
   it when the prefix has content — the "natural" link for a set of uploads
   (`…/golf-sim/sfx-family/`) just works. Public by design: the objects under a prefix are public
   anyway; the page only reveals sibling keys within a prefix someone already has.
+  A folder's **contents** (files + child folders) link to their **absolute** `cdn.…` url, not a
+  root-relative path — so an agent that fetches the page through an HTML→markdown reader keeps a
+  usable URL and can `fetch` each file in one hop (a relative `/foo/` survives conversion only as a
+  bare path it won't turn back into a URL). Upward nav (breadcrumbs, `..`) stays **relative** on
+  purpose: publish real urls for a folder's own contents, not a frictionless path up toward roots.
   `/api/tree|folder|move|rename|delete|permanent` (move/delete take a single key or batch `keys[]`).
   `POST /api/upload?key=<key>[&permanent=1]` streams the raw body into `BUCKET` (content-type from
   the key's extension) — the only write path. It also accepts an `Authorization: Bearer
@@ -40,8 +45,11 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
 - **`src/folder.tsx`** / **`src/login.tsx`** — the server-rendered pages (folder listing, sign-in)
   as `hono/jsx` components (auto-escaped; string out via `folderPage()`/`loginPage()`). esbuild
   (wrangler + vitest) transpiles `.tsx` from the tsconfig `jsx` fields — no build step, no new deps.
-  Folder pages carry `og:`/`twitter:` unfurl meta pointing at the card route below (canonical
-  `https://cdn.ramonfabrega.com` URLs — scrapers need absolute, and the Worker owns one host).
+  Folder pages carry `og:`/`twitter:` unfurl meta pointing at the card route below (absolute URLs
+  on the **request origin** — scrapers need absolute, and the Worker answers on several hosts:
+  the custom domain, preview builds, `wrangler dev`. Every public URL the Worker mints — folder-page
+  hrefs, og meta, `/api/tree` entries, the upload response — derives from the request the same way,
+  so a preview build links to itself, never to prod; see `publicUrl` in `lib/cdn.ts`).
 - **`src/card.ts`** — the 1200×630 og:image card `GET /.og/<prefix>.png` renders, drawn by
   [takumi](https://github.com/kane50613/takumi)'s WASM renderer (the one real dependency added;
   ~1.6 MB gz total on a 10 MB paid limit — wrangler resolves the package's `workerd` export

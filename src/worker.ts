@@ -18,7 +18,7 @@ import { ImageResponse } from "takumi-js/response";
 
 import { CARD_FONTS, folderCard } from "./card.ts";
 import { folderPage } from "./folder.tsx";
-import { DOMAIN, mimeFor, publicUrl } from "./lib/cdn.ts";
+import { mimeFor, publicUrl } from "./lib/cdn.ts";
 import { loginPage } from "./login.tsx";
 import {
   createFolder,
@@ -114,9 +114,12 @@ app.get("/logout", (c) => {
 
 // ── listing API ───────────────────────────────────────────────────────────
 // Full enriched object list; the client builds the folder tree from the keys.
+// Entry urls carry the REQUEST origin (custom domain, preview build, dev) — the
+// explorer's copy-link must match the host you're on, so testing a preview never
+// hands out prod links. No `domain` field: app.js uses location.host, same thing.
 app.get("/api/tree", async (c) => {
   try {
-    return c.json({ domain: DOMAIN, objects: await tree(c.env.BUCKET) });
+    return c.json({ objects: await tree(c.env.BUCKET, new URL(c.req.url).origin) });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 500);
   }
@@ -227,8 +230,9 @@ app.post("/api/upload", async (c) => {
       httpMetadata: { contentType: mimeFor(key) },
       customMetadata: permanent ? { permanent: "1" } : undefined,
     });
-    await purgeEdge(new URL(c.req.url).origin, [key]); // an overwritten key must serve the new bytes immediately
-    return c.json({ ok: true, key, url: publicUrl(key), permanent });
+    const origin = new URL(c.req.url).origin;
+    await purgeEdge(origin, [key]); // an overwritten key must serve the new bytes immediately
+    return c.json({ ok: true, key, url: publicUrl(origin, key), permanent });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);
   }
@@ -281,11 +285,12 @@ app.get("/", async (c) => {
 // under a dot-prefix à la `.keep`, so it can never shadow a real object key.
 // Cached like the folder page itself: short client max-age, no edge cache.
 app.get("/.og/*", async (c) => {
-  const m = /^\/\.og\/(.+)\.png$/.exec(new URL(c.req.url).pathname);
+  const url = new URL(c.req.url);
+  const m = /^\/\.og\/(.+)\.png$/.exec(url.pathname);
   if (!m?.[1]) return c.notFound();
   const prefix = `${decodeURIComponent(m[1])}/`;
   const [{ files, folders }, subtree] = await Promise.all([
-    listFolder(c.env.BUCKET, prefix),
+    listFolder(c.env.BUCKET, prefix, url.origin),
     listSubtree(c.env.BUCKET, prefix), // full-depth sizes for the sunburst
   ]);
   if (!files.length && !folders.length && !(await c.env.BUCKET.head(`${prefix}.keep`))) {
@@ -327,12 +332,13 @@ app.on(["GET", "HEAD"], "/*", async (c) => {
   // keys within a prefix someone already has. Not edge-cached (mutations can't
   // purge a folder page), just a short client max-age.
   if (key.endsWith("/")) {
-    const { files, folders } = await listFolder(c.env.BUCKET, key);
+    const origin = new URL(c.req.url).origin;
+    const { files, folders } = await listFolder(c.env.BUCKET, key, origin);
     // an empty folder still "exists" while its .keep marker does
     if (!files.length && !folders.length && !(await c.env.BUCKET.head(`${key}.keep`))) {
       return c.notFound();
     }
-    const body = c.req.method === "HEAD" ? null : folderPage(key, files, folders);
+    const body = c.req.method === "HEAD" ? null : folderPage(origin, key, files, folders);
     return c.html(body ?? "", 200, { "cache-control": "public, max-age=300" });
   }
 

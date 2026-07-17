@@ -40,11 +40,11 @@ describe("createFolder", () => {
 describe("tree", () => {
   test("classifies objects by extension and builds the public URL", async () => {
     await put(`${P}pic.png`, "x", "image/png");
-    const entry = (await tree(bucket)).find((o) => o.key === `${P}pic.png`);
+    const entry = (await tree(bucket, "https://cdn.test")).find((o) => o.key === `${P}pic.png`);
     expect(entry).toBeDefined();
     expect(entry?.ext).toBe("png");
     expect(entry?.category).toBe("image");
-    expect(entry?.url).toBe(`https://cdn.ramonfabrega.com/${P}pic.png`);
+    expect(entry?.url).toBe(`https://cdn.test/${P}pic.png`);
   });
 });
 
@@ -149,7 +149,9 @@ describe("permanent + sweep", () => {
   test("tree exposes the permanent flag", async () => {
     await put(`${P}x.txt`, "x", "text/plain");
     await setPermanent(bucket, `${P}x.txt`, true);
-    expect((await tree(bucket)).find((o) => o.key === `${P}x.txt`)?.permanent).toBe(true);
+    expect(
+      (await tree(bucket, "https://cdn.test")).find((o) => o.key === `${P}x.txt`)?.permanent
+    ).toBe(true);
   });
 
   test("sweep deletes expired objects but never permanent ones", async () => {

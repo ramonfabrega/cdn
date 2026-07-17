@@ -69,15 +69,29 @@ describe("folder share pages", () => {
     const html = await res.text();
     expect(html).toContain("1.wav");
     expect(html).toContain("2.wav");
-    expect(html).toContain('href="/golf-sim/sfx-family/1.wav"');
-    expect(html).toContain('href="/golf-sim/sfx-family/alt/"'); // subfolder links to its own page
+    // Contents (files + child folders) link to their ABSOLUTE public url, so an
+    // HTML→markdown fetch keeps a usable URL — read the page once, fetch each file.
+    expect(html).toContain('href="https://cdn.test/golf-sim/sfx-family/1.wav"');
+    expect(html).toContain('href="https://cdn.test/golf-sim/sfx-family/alt/"'); // subfolder → its own page
+    // Upward nav (the `..` parent) stays RELATIVE — we publish absolute urls for a
+    // folder's own contents, not a frictionless machine path up toward the roots.
+    expect(html).toContain('href="/golf-sim/"');
+    expect(html).not.toContain('href="https://cdn.test/golf-sim/"');
     expect(html).not.toContain("3.wav"); // one level only — nested files stay behind their folder
   });
 
   test("percent-encodes hrefs for keys with spaces/unicode", async () => {
     await env.BUCKET.put("shots/Screen Shot é.png", "x");
     const html = await (await SELF.fetch(`${BASE}/shots/`)).text();
-    expect(html).toContain('href="/shots/Screen%20Shot%20%C3%A9.png"');
+    expect(html).toContain('href="https://cdn.test/shots/Screen%20Shot%20%C3%A9.png"');
+  });
+
+  test("urls carry the REQUEST host — a preview build links to itself, not prod", async () => {
+    await env.BUCKET.put("multi/pic.png", "x");
+    const html = await (await SELF.fetch("https://preview.cdn.test/multi/")).text();
+    expect(html).toContain('href="https://preview.cdn.test/multi/pic.png"');
+    expect(html).toContain('property="og:url" content="https://preview.cdn.test/multi/"');
+    expect(html).not.toContain("https://cdn.test/"); // no host but the one that asked
   });
 
   test("hides .keep and renders an empty page for a marker-only folder", async () => {
@@ -111,16 +125,14 @@ describe("folder share pages", () => {
     expect(await res.text()).toBe("");
   });
 
-  test("carries og/twitter unfurl meta pointing at the canonical card URL", async () => {
+  test("carries og/twitter unfurl meta pointing at the request host's card URL", async () => {
     await env.BUCKET.put("golf-sim/sfx family/1.wav", "aaa");
     const html = await (await SELF.fetch(`${BASE}/golf-sim/sfx%20family/`)).text();
     expect(html).toContain('property="og:title" content="sfx family/"');
     expect(html).toContain('property="og:description" content="1 item · 3 B"');
+    expect(html).toContain('property="og:url" content="https://cdn.test/golf-sim/sfx%20family/"');
     expect(html).toContain(
-      'property="og:url" content="https://cdn.ramonfabrega.com/golf-sim/sfx%20family/"'
-    );
-    expect(html).toContain(
-      'property="og:image" content="https://cdn.ramonfabrega.com/.og/golf-sim/sfx%20family.png"'
+      'property="og:image" content="https://cdn.test/.og/golf-sim/sfx%20family.png"'
     );
     expect(html).toContain('name="twitter:card" content="summary_large_image"');
   });
@@ -157,7 +169,7 @@ describe("upload (POST /api/upload)", () => {
     expect(await res.json()).toEqual({
       ok: true,
       key: "up/hi.txt",
-      url: "https://cdn.ramonfabrega.com/up/hi.txt",
+      url: "https://cdn.test/up/hi.txt",
       permanent: false,
     });
     const obj = await env.BUCKET.get("up/hi.txt");

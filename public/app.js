@@ -51,7 +51,9 @@ const icon = (n) =>
   `<svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[n]}</svg>`;
 
 let objects = [];
-let domain = location.host; // real value arrives with /api/tree
+// The explorer always builds links on its own host — the Worker serves urls on the
+// request origin too (custom domain, preview build, dev), so the two always agree.
+const domain = location.host;
 let q = "";
 const HOME = "__home__";
 let scope = HOME; // HOME = overview, null = All files, "__root__" = root, "cuanto/" = a folder prefix
@@ -159,7 +161,6 @@ async function load() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || res.status);
     objects = data.objects || [];
-    domain = data.domain || domain;
     homeInvalidate(); // bucket contents changed → rebuild the overview's tree/slots
   } catch (e) {
     railEl.innerHTML = "";

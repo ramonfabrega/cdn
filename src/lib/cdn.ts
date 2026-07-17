@@ -5,8 +5,6 @@
 // to import from here; it now owns its own tiny helpers, so this module is
 // Worker-internal.
 
-export const DOMAIN = "cdn.ramonfabrega.com";
-
 /** Lowercased extension of a path incl. the dot (".png"), or "" — matches node's
     extname (leading-dot files like ".keep" have no extension). Inlined to keep
     this module dependency-free. */
@@ -42,11 +40,16 @@ export function mimeFor(path: string): string {
   return MIME_TYPES[extname(path).toLowerCase()] ?? "application/octet-stream";
 }
 
-/** Public URL for an object key. Each path segment is percent-encoded (spaces,
-    unicode, etc.) so the URL is paste-safe; the Worker decodes on serve. */
-export function publicUrl(key: string): string {
+/** Public URL for an object key on `origin` (a URL.origin, e.g. "https://cdn.test"
+    — no trailing slash). The origin comes from the REQUEST, never a hardcoded
+    canonical domain: the Worker answers on several hosts (the custom domain,
+    preview builds, wrangler dev), and links must stay on the host that served
+    them — a preview page pointing at prod would sabotage exactly what a preview
+    is for. Each path segment is percent-encoded (spaces, unicode, etc.) so the
+    URL is paste-safe; the Worker decodes on serve. */
+export function publicUrl(origin: string, key: string): string {
   const segments = key.replace(/^\//, "").split("/");
-  return `https://${DOMAIN}/${segments.map(encodeURIComponent).join("/")}`;
+  return `${origin}/${segments.map(encodeURIComponent).join("/")}`;
 }
 
 // ── type classification (drives the explorer's badges) ──────────────────────

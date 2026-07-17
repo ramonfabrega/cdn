@@ -92,8 +92,17 @@ const Crumbs: FC<{ prefix: string }> = ({ prefix }) => {
   );
 };
 
-const DirRow: FC<{ to: string; label?: string; up?: boolean }> = ({ to, label, up }) => (
-  <a class={up ? "row up" : "row"} href={href(to)}>
+// Child folders link to their ABSOLUTE url; the `..` parent stays relative. An
+// agent handed this page via an HTML→markdown fetch keeps a link's target exactly
+// as written — a root-relative `/foo/` gives it a path it won't turn into a URL,
+// so contents (down) publish full urls while upward nav (toward the roots) doesn't.
+const DirRow: FC<{ origin: string; to: string; label?: string; up?: boolean }> = ({
+  origin,
+  to,
+  label,
+  up,
+}) => (
+  <a class={up ? "row up" : "row"} href={up ? href(to) : publicUrl(origin, to)}>
     <span class="nm">
       {up ? (
         ".."
@@ -110,8 +119,11 @@ const DirRow: FC<{ to: string; label?: string; up?: boolean }> = ({ to, label, u
   </a>
 );
 
+// f.url is the absolute publicUrl(key) (see storage.ts). Absolute so it survives
+// an HTML→markdown fetch as a real URL — the whole point of the folder page for a
+// machine reader: read once, then fetch each file directly, no second hop.
 const FileRow: FC<{ f: Entry; prefix: string }> = ({ f, prefix }) => (
-  <a class="row" href={href(f.key)}>
+  <a class="row" href={f.url}>
     <span class="nm">{f.key.slice(prefix.length)}</span>
     <span class="badge" style={`background:${BADGE[f.category] ?? BADGE.file}`}>
       {f.ext || "file"}
@@ -121,7 +133,8 @@ const FileRow: FC<{ f: Entry; prefix: string }> = ({ f, prefix }) => (
   </a>
 );
 
-const Page: FC<{ prefix: string; files: Entry[]; folders: string[] }> = ({
+const Page: FC<{ origin: string; prefix: string; files: Entry[]; folders: string[] }> = ({
+  origin,
   prefix,
   files,
   folders,
@@ -143,15 +156,16 @@ const Page: FC<{ prefix: string; files: Entry[]; folders: string[] }> = ({
         <meta name="robots" content="noindex" />
         <title>{name} · cdn</title>
         {/* unfurl card — /.og/<prefix>.png (see src/card.ts). Absolute URLs, as
-            scrapers require — the canonical domain, not the request origin: the
-            Worker owns exactly one host, and dev's simulated origin is http. */}
+            scrapers require — on the REQUEST origin, not a canonical domain: the
+            Worker answers on several hosts (custom domain, preview builds, dev),
+            and a scraper unfurling a preview link must card the preview. */}
         <meta property="og:title" content={`${name}/`} />
         <meta property="og:description" content={meta} />
         <meta property="og:type" content="website" />
-        <meta property="og:url" content={publicUrl(prefix)} />
+        <meta property="og:url" content={publicUrl(origin, prefix)} />
         <meta
           property="og:image"
-          content={`${publicUrl(`.og/${prefix.replace(/\/$/, "")}`)}.png`}
+          content={`${publicUrl(origin, `.og/${prefix.replace(/\/$/, "")}`)}.png`}
         />
         <meta property="og:image:width" content="1200" />
         <meta property="og:image:height" content="630" />
@@ -172,9 +186,13 @@ const Page: FC<{ prefix: string; files: Entry[]; folders: string[] }> = ({
               <div class="empty">Empty folder.</div>
             ) : (
               <>
-                {parent && <DirRow to={parent} up />}
+                {parent && <DirRow origin={origin} to={parent} up />}
                 {folders.map((f) => (
-                  <DirRow to={f} label={f.slice(prefix.length).replace(/\/$/, "")} />
+                  <DirRow
+                    origin={origin}
+                    to={f}
+                    label={f.slice(prefix.length).replace(/\/$/, "")}
+                  />
                 ))}
                 {sorted.map((f) => (
                   <FileRow f={f} prefix={prefix} />
@@ -191,5 +209,10 @@ const Page: FC<{ prefix: string; files: Entry[]; folders: string[] }> = ({
   );
 };
 
-export const folderPage = (prefix: string, files: Entry[], folders: string[]): string =>
-  `<!doctype html>${<Page prefix={prefix} files={files} folders={folders} />}`;
+export const folderPage = (
+  origin: string,
+  prefix: string,
+  files: Entry[],
+  folders: string[]
+): string =>
+  `<!doctype html>${<Page origin={origin} prefix={prefix} files={files} folders={folders} />}`;
