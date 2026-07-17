@@ -227,6 +227,34 @@ already been eaten by the old blanket 30d rule — the next mux release must pub
 `share … --permanent` (flag needed once per key; it sticks across later overwrites), after which
 an installed app updating after a months-long release gap still finds them.
 
+## Open threads
+
+Design work parked after the absolute-url arc (#28), captured here so it survives a fresh start —
+these are *decisions/features not yet made*, distinct from the operational cleanup above.
+
+1. **Agent-readable folder manifest.** Folder pages now emit absolute content URLs, so an
+   HTML→markdown fetch (how an agent actually reads a link it's handed) yields usable file URLs in
+   one hop — read the page once, fetch each file, no discovery round-trip. The exact-fidelity path
+   is still open: content-negotiate the *same* folder URL — `Accept: application/json` (plus an
+   explicit `?format=json` alias for fetchers that can't set the header) returns
+   `{ type:"folder", url, files:[{ name, url, contentType, size, lastModified }], folders:[…] }`,
+   a thin projection of `listFolder` — no new route. Deliberately **not** a
+   `<script type="application/json">` / `<link rel="alternate">` / `Link:` header embed: all three
+   are stripped by the markdown conversion agents use, so they never reach the reader (verified —
+   the folder page's `<head>` and scripts don't survive; only the response body and visible
+   text/hrefs do). Gated on thread 2.
+
+2. **What's really public — and should roots be un-guessable?** The CDN is public by construction:
+   anyone with `cuanto/foo/1.png` can walk `cuanto/` and every prefix below it via the folder
+   pages (siblings + children are listed one level at a time). Top-level roots are only *semi*
+   -invisible (guessable, not secret). Open question before shipping the JSON manifest — which
+   makes enumeration trivial, i.e. effectively publishes a sitemap: decide what should be
+   enumerable vs. not, and whether to anonymize / opaque-slug roots so a shared deep link can't
+   leak collateral (other projects, internal structure). Until that's decided, two brakes stay in
+   place: upward nav on the folder page (breadcrumbs, `..`) is kept **relative** on purpose — real
+   URLs for a folder's own contents, not a frictionless machine path up toward the roots — and no
+   machine manifest is published.
+
 ## Recent arcs
 
 Both post-#8 arcs have shipped: **arc 1** — server pages to `hono/jsx` (`src/folder.tsx`,
