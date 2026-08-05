@@ -258,6 +258,51 @@ these are *decisions/features not yet made*, distinct from the operational clean
    URLs for a folder's own contents, not a frictionless machine path up toward the roots — and no
    machine manifest is published.
 
+3. **Previews & rendering for the types that don't have them.** Today: **images** unfurl natively
+   (the scraper GETs the bytes, `image/*` *is* the preview), **folders** unfurl via `<head>` meta →
+   the takumi card (arc 2), and **video** is half — Slack/Discord sniff the content-type and embed a
+   player, Twitter/iMessage want `og:video` meta the Worker doesn't emit. Everything else is
+   link-only: **pdf, html, audio, code (js/json/css/xml/csv), text (txt/md/log), archives**. The
+   files-with-no-preview set and the files-that-render-raw set are nearly the same set, which is why
+   these got parked as one thread — but they are **two different asks**, and the distinction is the
+   whole decision:
+
+   - **A preview is additive.** og meta / a card is *about* the bytes; the bytes are untouched.
+     Byte-exact serving, Range, direct download all survive.
+   - **Rendering is transformative.** A pretty `.md` view means what a human sees at the URL is *not*
+     the file — generated HTML replaced `text/plain` bytes. That collides with the contract at the
+     top of this file (*"every other path streams the matching R2 object … range-capable"*) and with
+     what a `share` link is understood to be. So rendering is not "a bigger preview"; it's a
+     different question with a different blast radius.
+
+   **The mechanism constraint that shapes the option space:** a raw non-HTML file has no `<head>`, so
+   there is nowhere to attach og meta — a synthetic card for pdf/zip/audio can only reach a scraper
+   by *intercepting* the request (branch on a known bot UA at the `/*` handler, serve a meta wrapper
+   to Slackbot/Twitterbot/Discordbot/facebookexternalhit/iMessage, raw bytes to everyone else; how
+   Dropbox/GitHub do it). HTML files *do* have a head, so they can be injected into directly, no
+   UA-sniffing. And a **rendered viewer page has a head by construction** — which is the interesting
+   coupling: if a renderable type gets a viewer, that page carries its own og card for free, and the
+   two asks collapse into one artifact for those types.
+
+   Option space for *where a rendered view lives*, if one is ever built (roughly increasing
+   commitment): a **sibling URL** (`?view`, or a `/view/` route) leaving the canonical URL byte-exact;
+   **content-negotiating the canonical URL** (`Sec-Fetch-Mode: navigate` → rendered, curl/Range → raw
+   — elegant, but one-URL-two-representations, needs `Vary`/cache care, and surprises agents, cf.
+   thread 1's finding about what survives markdown conversion); or **flipping what `share` hands out**
+   for renderable types, which changes the CLI's contract, not just the Worker's.
+
+   For **html** specifically there's a fidelity ceiling worth recording: takumi is a fixed-node-tree
+   layout renderer, not a browser — it cannot render arbitrary CSS/JS. A *faithful* thumbnail needs
+   Cloudflare **Browser Rendering** (a real headless Chrome + a new binding, its own quota and cold
+   start), which is the only heavyweight dependency anywhere in this thread. Separately floated and
+   unresolved: serving self-contained HTML inside a phone-framed/contained chrome rather than
+   full-bleed.
+
+   Interactions to weigh before any of it: a bot-served card **leaks filename + kind for any key
+   someone holds**, which is thread 2's question again; rendering user-bytes as HTML wants sanitizing
+   (low risk while the bucket is only our own output); Browser Rendering must be pointed only at our
+   own keys, never a supplied URL. Nothing here is decided — this is the map, not a plan.
+
 ## Recent arcs
 
 Both post-#8 arcs have shipped: **arc 1** — server pages to `hono/jsx` (`src/folder.tsx`,
@@ -266,5 +311,5 @@ vanilla/zero-build — the streamed-shell boot and static skeleton are load-bear
 single-paint rule above) — and **arc 2** — og:image unfurl cards (`src/card.ts` + the `/.og/`
 route + meta on folder pages; raw file URLs already unfurled natively via content-type, folder
 pages were the gap). Ideas deliberately left on the table: cards (or pretty file pages) for
-non-visual file types like zips/logs; purging card caches on write (today `max-age=300` just
-ages out — a stale card for ≤5 min is fine).
+non-visual file types like zips/logs — since expanded into **open thread 3** above; purging card
+caches on write (today `max-age=300` just ages out — a stale card for ≤5 min is fine).
