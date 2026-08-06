@@ -205,10 +205,12 @@ CF cred).
   old blanket 30d lifecycle rule is gone (R2 rules are prefix-only — no per-object exemptions);
   only the multipart-abort rule remains on the bucket. Flag at upload (`share … --permanent`,
   `?permanent=1`) or toggle in the UI (∞ badge, `is:permanent` search); overwrites keep the flag.
-- **Caching**: `.xml` serves `max-age=300` (mutable pointers — mux's Sparkle appcast is overwritten
-  in place every release); everything else `max-age=86400, s-maxage=3600` (a day in clients, an
-  hour per edge POP). Every write purges its keys from the local POP's cache, so re-upload → fetch
-  is immediately fresh; other POPs age out within the hour.
+- **Caching**: one policy for every key — `max-age=0, s-maxage=3600`. Browsers revalidate each
+  view (If-None-Match → a cheap 304; the edge answers conditionals even on cache hits) while each
+  edge POP caches the bytes an hour. Every write purges its keys from the local POP's cache, so
+  re-upload → fetch is immediately fresh; other POPs age out within the hour. (Formerly
+  `max-age=86400`: a day of *browser* cache meant an overwritten key looked stale until the client
+  cache-busted, even though the edge purge worked — the `.xml` special case died with it.)
 - **Mutate through the Worker, not around it.** The cache purge lives in the Worker, so it only
   fires for writes that go through it (`/api/*`, the explorer, `share`). Delete an object with
   `wrangler r2 object delete` or the R2 dashboard and the bytes vanish from R2 while the **public

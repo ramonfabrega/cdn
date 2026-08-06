@@ -383,18 +383,15 @@ app.on(["GET", "HEAD"], "/*", async (c) => {
   obj.writeHttpMetadata(headers); // content-type & friends from stored metadata
   headers.set("etag", obj.httpEtag);
   headers.set("accept-ranges", "bytes");
-  // Freshness policy. `.xml` keys are mutable pointers (mux's Sparkle appcast is
-  // overwritten in place every release) — clients must re-check within minutes,
-  // so they get a short max-age everywhere. Everything else caches a day in the
-  // client but only an hour at any single edge POP (s-maxage): purge-on-write
-  // only clears the POP that handled the write, so s-maxage bounds how long an
-  // overwritten key can serve stale bytes from every other POP.
-  headers.set(
-    "cache-control",
-    key.toLowerCase().endsWith(".xml")
-      ? "public, max-age=300"
-      : "public, max-age=86400, s-maxage=3600"
-  );
+  // Freshness policy: every key is overwritable in place (same URL, new bytes),
+  // so browsers must never trust a stale copy — max-age=0 makes them revalidate
+  // each view (If-None-Match → a cheap 304; the edge answers conditionals even on
+  // cache hits). The heavy lifting stays at the edge: s-maxage caches an hour per
+  // POP, and purge-on-write clears the POP that handled the write, so an
+  // overwrite is visible immediately there and within the hour everywhere else.
+  // (This replaced max-age=86400 — a day of browser cache made every overwrite
+  // look stale until the client cache-busted; one policy, no .xml special case.)
+  headers.set("cache-control", "public, max-age=0, s-maxage=3600");
 
   if (!("body" in obj)) return new Response(null, { status: 304, headers }); // onlyIf matched
   const body = c.req.method === "HEAD" ? null : obj.body;

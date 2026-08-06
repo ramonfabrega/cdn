@@ -44,16 +44,15 @@ describe("object serving (the CDN)", () => {
     expect((await SELF.fetch(`${BASE}/folder/.keep`)).status).toBe(404);
   });
 
-  test(".xml serves a short max-age (mutable pointers like the Sparkle appcast)", async () => {
+  test("objects revalidate client-side, cache an hour per edge POP", async () => {
+    // One policy for every key: keys are overwritable in place, so browsers must
+    // revalidate each view (max-age=0 → cheap 304s) while the edge holds the bytes.
     await env.BUCKET.put("mux/appcast.xml", "<rss/>");
-    const res = await SELF.fetch(`${BASE}/mux/appcast.xml`);
-    expect(res.headers.get("cache-control")).toBe("public, max-age=300");
-  });
-
-  test("other keys cache a day client-side but only an hour per edge POP", async () => {
     await env.BUCKET.put("mux/App.zip", "zipbytes");
-    const res = await SELF.fetch(`${BASE}/mux/App.zip`);
-    expect(res.headers.get("cache-control")).toBe("public, max-age=86400, s-maxage=3600");
+    for (const key of ["mux/appcast.xml", "mux/App.zip"]) {
+      const res = await SELF.fetch(`${BASE}/${key}`);
+      expect(res.headers.get("cache-control")).toBe("public, max-age=0, s-maxage=3600");
+    }
   });
 });
 
