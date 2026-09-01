@@ -31,9 +31,20 @@ describe("categoryForExt", () => {
 describe("mimeFor", () => {
   test("known extensions + octet-stream fallback", () => {
     expect(mimeFor("x.png")).toBe("image/png");
-    expect(mimeFor("x.html")).toBe("text/html");
+    expect(mimeFor("x.html")).toBe("text/html; charset=utf-8");
     expect(mimeFor("x.weird")).toBe("application/octet-stream");
     expect(mimeFor("noext")).toBe("application/octet-stream");
+  });
+
+  // The mojibake guard: a .md/.txt served as bare "text/plain" gets decoded as
+  // latin-1, so every em-dash in a shared note turns into â€”. Text-ish types
+  // must carry the charset; binary ones must not (a charset on image/png is
+  // meaningless noise).
+  test("text-ish types carry charset=utf-8, binary ones don't", () => {
+    for (const ext of ["md", "txt", "html", "htm", "css", "js", "mjs", "json", "svg"])
+      expect(mimeFor(`x.${ext}`)).toMatch(/; charset=utf-8$/);
+    for (const ext of ["png", "jpg", "gif", "webp", "pdf", "mp4", "mov", "weird"])
+      expect(mimeFor(`x.${ext}`)).not.toContain("charset");
   });
 });
 

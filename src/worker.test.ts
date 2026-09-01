@@ -7,7 +7,7 @@ import { describe, expect, test } from "vitest";
 const BASE = "https://cdn.test";
 
 describe("object serving (the CDN)", () => {
-  test("serves an object with its stored content-type", async () => {
+  test("serves an object with the content-type its key implies", async () => {
     await env.BUCKET.put("a1b2c3.png", new Uint8Array([1, 2, 3, 4]), {
       httpMetadata: { contentType: "image/png" },
     });
@@ -17,6 +17,18 @@ describe("object serving (the CDN)", () => {
     expect(res.headers.get("accept-ranges")).toBe("bytes");
     expect(res.headers.get("cache-control")).toContain("max-age");
     expect([...new Uint8Array(await res.arrayBuffer())]).toEqual([1, 2, 3, 4]);
+  });
+
+  // Serving re-derives the type from the key instead of echoing stored metadata,
+  // so the MIME table is retroactive: objects uploaded before `; charset=utf-8`
+  // existed serve with it anyway, and nothing has to be backfilled in R2.
+  test("re-types a legacy object stored without a charset", async () => {
+    await env.BUCKET.put("old/notes.md", "— arrows → and ×", {
+      httpMetadata: { contentType: "text/plain" }, // what the old table stored
+    });
+    const res = await SELF.fetch(`${BASE}/old/notes.md`);
+    expect(res.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(await res.text()).toBe("— arrows → and ×");
   });
 
   test("supports range requests", async () => {

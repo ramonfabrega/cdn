@@ -14,25 +14,35 @@ function extname(path: string): string {
   return dot > 0 ? base.slice(dot) : "";
 }
 
+/** A text-ish type with its charset spelled out. Every type whose bytes are
+    characters gets this: with no charset parameter the browser falls back to a
+    latin-1-ish default, and UTF-8 punctuation (em-dashes, arrows, ×, ≤,
+    box-drawing) renders as mojibake. `text/plain` has no in-band way to declare
+    an encoding — no <meta>, no XML prolog — so the header is the ONLY place it
+    can be said, which is why the fix lives here and not in the file. HTML/SVG
+    could declare it themselves; they shouldn't have to, and the files we upload
+    are just as often someone else's. */
+const utf8 = (type: string) => `${type}; charset=utf-8`;
+
 /** Extension -> MIME type. Anything not here falls back to octet-stream. */
 export const MIME_TYPES: Record<string, string> = {
-  ".html": "text/html",
-  ".htm": "text/html",
+  ".html": utf8("text/html"),
+  ".htm": utf8("text/html"),
   ".pdf": "application/pdf",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
-  ".svg": "image/svg+xml",
+  ".svg": utf8("image/svg+xml"),
   ".gif": "image/gif",
   ".webp": "image/webp",
   ".mp4": "video/mp4",
   ".mov": "video/quicktime",
-  ".json": "application/json",
-  ".css": "text/css",
-  ".js": "text/javascript",
-  ".mjs": "text/javascript",
-  ".txt": "text/plain",
-  ".md": "text/plain",
+  ".json": utf8("application/json"),
+  ".css": utf8("text/css"),
+  ".js": utf8("text/javascript"),
+  ".mjs": utf8("text/javascript"),
+  ".txt": utf8("text/plain"),
+  ".md": utf8("text/plain"),
 };
 
 /** Pick a content-type from a path/key extension. */

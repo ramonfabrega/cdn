@@ -380,7 +380,15 @@ app.on(["GET", "HEAD"], "/*", async (c) => {
   }
 
   const headers = new Headers();
-  obj.writeHttpMetadata(headers); // content-type & friends from stored metadata
+  obj.writeHttpMetadata(headers); // content-encoding/disposition/… from stored metadata
+  // Content-type is re-derived from the key on every serve rather than read back
+  // from storage. The extension is ALREADY the sole source of truth on write (the
+  // upload ignores the client's content-type), so for anything we stored this is a
+  // no-op — its value is that the table becomes retroactive: adding `; charset=utf-8`
+  // fixes every .md/.txt already sitting in the bucket, with no metadata backfill,
+  // and the same holds for the next entry we add. It also types objects that got
+  // into R2 by some other door (dashboard upload, `wrangler r2 object put`).
+  headers.set("content-type", mimeFor(key));
   headers.set("etag", obj.httpEtag);
   headers.set("accept-ranges", "bytes");
   // Freshness policy: every key is overwritable in place (same URL, new bytes),
