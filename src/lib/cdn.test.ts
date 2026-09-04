@@ -36,12 +36,19 @@ describe("mimeFor", () => {
     expect(mimeFor("noext")).toBe("application/octet-stream");
   });
 
+  // A Sparkle appcast is the most-read .xml on the CDN and it used to serve as
+  // octet-stream, i.e. a download prompt instead of a readable feed. Typing it
+  // costs nothing (serving re-derives from the key) and Sparkle never looks.
+  test("xml renders instead of downloading", () => {
+    expect(mimeFor("ccc/appcast.xml")).toBe("application/xml; charset=utf-8");
+  });
+
   // The mojibake guard: a .md/.txt served as bare "text/plain" gets decoded as
   // latin-1, so every em-dash in a shared note turns into â€”. Text-ish types
   // must carry the charset; binary ones must not (a charset on image/png is
   // meaningless noise).
   test("text-ish types carry charset=utf-8, binary ones don't", () => {
-    for (const ext of ["md", "txt", "html", "htm", "css", "js", "mjs", "json", "svg"])
+    for (const ext of ["md", "txt", "html", "htm", "css", "js", "mjs", "json", "svg", "xml"])
       expect(mimeFor(`x.${ext}`)).toMatch(/; charset=utf-8$/);
     for (const ext of ["png", "jpg", "gif", "webp", "pdf", "mp4", "mov", "weird"])
       expect(mimeFor(`x.${ext}`)).not.toContain("charset");

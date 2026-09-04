@@ -38,6 +38,12 @@ export const MIME_TYPES: Record<string, string> = {
   ".mp4": "video/mp4",
   ".mov": "video/quicktime",
   ".json": utf8("application/json"),
+  // `application/xml`, not `text/xml`: browsers render it in their XML viewer
+  // instead of downloading it, which is the whole point — an appcast URL you
+  // paste somewhere should be readable. Sparkle is indifferent either way
+  // (SUAppcast parses the raw bytes with NSXMLDocument; it never reads the
+  // content-type), so this is a browser-side fix with no OTA blast radius.
+  ".xml": utf8("application/xml"),
   ".css": utf8("text/css"),
   ".js": utf8("text/javascript"),
   ".mjs": utf8("text/javascript"),

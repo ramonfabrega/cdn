@@ -245,8 +245,11 @@ Two gotchas when handling it:
   Deriving again at serve time is a no-op for anything we stored — the upload already ignores the
   client's content-type — but it makes the MIME table *retroactive*: a change to it applies to
   every object already in the bucket, no metadata backfill, and objects that got into R2 by some
-  other door (dashboard, `wrangler r2 object put`) are typed the same as ours. Text-ish types
-  (`text/*`, HTML, SVG, JSON) carry **`; charset=utf-8`**: with no charset the browser guesses
+  other door (dashboard, `wrangler r2 object put`) are typed the same as ours — that retroactivity
+  is why adding `.xml` (`application/xml`, so an appcast *reads* in a browser instead of prompting a
+  download) fixed every appcast already in the bucket, Sparkle being indifferent either way since
+  `SUAppcast` parses the raw bytes and never reads the header. Text-ish types
+  (`text/*`, HTML, SVG, JSON, XML) carry **`; charset=utf-8`**: with no charset the browser guesses
   latin-1, and a shared `.md`/`.txt` renders every em-dash, arrow, `×` and box-drawing character
   as mojibake. Plain text has no in-band way to declare its encoding — no `<meta>`, no XML prolog
   — so the header is the only place it can be said.
