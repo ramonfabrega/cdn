@@ -2,7 +2,7 @@
 // and the auth gate. Runs the real Worker (SELF) against Miniflare R2 (env.BUCKET).
 
 import { env, SELF } from "cloudflare:test";
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const BASE = "https://cdn.test";
 
@@ -320,5 +320,117 @@ describe("explorer root (streamed shell + embedded tree)", () => {
     expect(html).toContain("window.__tree=");
     expect(html).not.toContain("</script><b>");
     expect(html).toContain("\\u003c/script>");
+  });
+});
+
+// The Cache API only clears the POP the Worker ran in, so a write also asks
+// Cloudflare to purge the URL zone-wide. That second half is exactly what an OTA
+// feed depends on — the appcast is read from POPs that never saw the upload — and
+// it leaves no trace inside the runtime, so assert on the API call itself.
+// SELF runs in this isolate, so a stubbed global fetch catches the Worker's.
+describe("zone purge on write", () => {
+  const BEARER = { authorization: "Bearer test-upload-token" };
+  const ZONE = "f15a4dd4342a021564ae984134488fce"; // wrangler.jsonc vars.CDN_ZONE_ID
+
+  type PurgeCall = { url: string; auth: string | null; files: string[] };
+
+  // The destructive APIs take the session cookie, not the upload bearer.
+  const cookie = async () => {
+    const res = await SELF.fetch(`${BASE}/login`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "password=test-password",
+    });
+    return (res.headers.get("set-cookie") ?? "").split(";")[0];
+  };
+
+  // Intercept only api.cloudflare.com; everything else still goes through the real
+  // fetch, so nothing else in the Worker changes shape under the stub.
+  const interceptPurge = (status = 200): PurgeCall[] => {
+    const calls: PurgeCall[] = [];
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (!url.startsWith("https://api.cloudflare.com/")) return real(input, init);
+      calls.push({
+        url,
+        auth: new Headers(init?.headers).get("authorization"),
+        files: JSON.parse(String(init?.body)).files,
+      });
+      return Response.json({ success: status < 400 }, { status });
+    });
+    return calls;
+  };
+
+  // The token is set per-test rather than in vitest.config.ts, so every OTHER test
+  // in the suite runs with the zone purge off and makes no outbound request at all.
+  beforeEach(() => {
+    env.CDN_PURGE_TOKEN = "test-purge-token";
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    env.CDN_PURGE_TOKEN = "";
+  });
+
+  test("an upload purges its public url zone-wide", async () => {
+    const calls = interceptPurge();
+    const res = await SELF.fetch(`${BASE}/api/upload?key=ccc/appcast.xml`, {
+      method: "POST",
+      headers: BEARER,
+      body: "<rss/>",
+    });
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe(`https://api.cloudflare.com/client/v4/zones/${ZONE}/purge_cache`);
+    expect(calls[0].auth).toBe("Bearer test-purge-token");
+    // The PUBLIC origin, not the request's (cdn.test here): previews share prod's
+    // bindings, so a preview upload mutates the live bucket and has to invalidate
+    // the live domain rather than its own hostname.
+    expect(calls[0].files).toEqual(["https://cdn.ramonfabrega.com/ccc/appcast.xml"]);
+  });
+
+  test("a delete purges every key it removed", async () => {
+    await env.BUCKET.put("gone/a.png", "a");
+    await env.BUCKET.put("gone/b.png", "b");
+    const auth = await cookie();
+    const calls = interceptPurge();
+    const res = await SELF.fetch(`${BASE}/api/delete`, {
+      method: "POST",
+      headers: { cookie: auth, "content-type": "application/json" },
+      body: JSON.stringify({ keys: ["gone/a.png", "gone/b.png"] }),
+    });
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].files.toSorted()).toEqual([
+      "https://cdn.ramonfabrega.com/gone/a.png",
+      "https://cdn.ramonfabrega.com/gone/b.png",
+    ]);
+  });
+
+  test("a failed purge does not fail the write", async () => {
+    const calls = interceptPurge(403);
+    // The bytes are already in R2 — reporting failure would make a release script
+    // retry a write that in fact succeeded. It logs instead.
+    const res = await SELF.fetch(`${BASE}/api/upload?key=ok-anyway.txt`, {
+      method: "POST",
+      headers: BEARER,
+      body: "z",
+    });
+    expect(res.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(await (await env.BUCKET.get("ok-anyway.txt"))?.text()).toBe("z");
+  });
+
+  test("no token configured ⇒ local purge only, no api call", async () => {
+    const calls = interceptPurge();
+    env.CDN_PURGE_TOKEN = "";
+    const res = await SELF.fetch(`${BASE}/api/upload?key=quiet.txt`, {
+      method: "POST",
+      headers: BEARER,
+      body: "q",
+    });
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([]);
   });
 });

@@ -11,7 +11,14 @@ export default defineConfig({
     cloudflareTest({
       wrangler: { configPath: "./wrangler.jsonc" },
       miniflare: {
-        bindings: { CDN_UPLOAD_TOKEN: "test-upload-token", CDN_PASSWORD: "test-password" },
+        bindings: {
+          CDN_UPLOAD_TOKEN: "test-upload-token",
+          CDN_PASSWORD: "test-password",
+          // Blanked deliberately: .dev.vars may hold a REAL Cache Purge token on a
+          // laptop, and a test suite must never reach api.cloudflare.com. The zone
+          // purge tests set it per-test, with global fetch stubbed.
+          CDN_PURGE_TOKEN: "",
+        },
       },
     }),
   ],

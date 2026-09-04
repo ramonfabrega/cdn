@@ -36,16 +36,73 @@ import {
 const COOKIE = "cdn_session";
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
+// ── cache purge ──────────────────────────────────────────────────────────────
 // Evict keys from the edge cache after a write, so an overwritten key serves the
-// new bytes immediately (the "?v2 footgun"). Cache entries are keyed by the full
-// request URL, so purge under the origin the mutation arrived on (in prod that's
-// cdn.ramonfabrega.com — the same host GETs hit). The Cache API is per-POP: this
-// clears the POP that handled the mutation — the one you're about to re-fetch
-// from — while other POPs age out via s-maxage (≤1h, see the GET handler). Capped
-// so a huge folder delete can't blow the per-request subrequest budget; beyond
-// the cap we just let s-maxage do its job.
-const purgeEdge = (origin: string, keys: string[]) =>
-  Promise.all(keys.slice(0, 100).map((k) => caches.default.delete(new Request(`${origin}/${k}`))));
+// new bytes immediately (the "?v2 footgun"). Two mechanisms, because neither is
+// sufficient alone:
+//
+//   • `caches.default.delete()` — free and immediate, but the Cache API is
+//     per-POP: it clears ONLY the data center this Worker ran in.
+//   • the zone purge API — global (every POP), a couple of seconds, and needs a
+//     credential: CDN_PURGE_TOKEN, a Zone.Cache Purge token for CDN_ZONE_ID.
+//
+// The local delete alone was the whole policy until now: "the writing POP is
+// fresh, everyone else ages out via s-maxage (≤1h)". Fine for a screenshot link,
+// wrong for a release feed — an OTA client on another continent could read an
+// hour-old `appcast.xml`, and worse, pair a FRESH appcast with the STALE bytes of
+// a stable `*-latest.zip` key, which fails Sparkle's signature check rather than
+// merely looking old. The zone purge makes "an overwrite is visible immediately"
+// true everywhere instead of only where you happened to upload from.
+//
+// The zone purge always names the PUBLIC origin, never the request's: a preview
+// version shares production's bindings, so a write from a *.workers.dev preview
+// mutates the live bucket and must invalidate the live domain. The request origin
+// is purged locally too, so `wrangler dev` and previews re-read their own writes.
+//
+// Capped so a huge folder delete can't blow the per-request subrequest budget;
+// beyond the cap we let s-maxage do its job, as before.
+const PURGE_CAP = 100;
+const PURGE_BATCH = 30; // Cloudflare's purge-by-url limit per API call
+
+const purgeZone = async (env: Env, urls: string[]) => {
+  // No token configured (tests, `wrangler dev`, a fresh deploy) ⇒ local-only
+  // purge, i.e. exactly the old behavior. Never fatal.
+  if (!env.CDN_PURGE_TOKEN || !env.CDN_ZONE_ID) return;
+  for (let i = 0; i < urls.length; i += PURGE_BATCH) {
+    const files = urls.slice(i, i + PURGE_BATCH);
+    const res = await fetch(
+      `https://api.cloudflare.com/client/v4/zones/${env.CDN_ZONE_ID}/purge_cache`,
+      {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${env.CDN_PURGE_TOKEN}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ files }),
+      }
+    );
+    // A failed purge must NOT fail the write: the bytes are already in R2, and
+    // telling `share` the upload failed would be a lie that makes release scripts
+    // retry a write that succeeded. Log it instead (observability is on) — a
+    // silent purge failure is precisely how this class of staleness bug hides.
+    if (!res.ok) {
+      console.error(
+        `zone purge failed (${res.status}) for ${files.length} url(s): ${(await res.text().catch(() => "")).slice(0, 300)}`
+      );
+    }
+  }
+};
+
+const purgeEdge = async (env: Env, origin: string, keys: string[]) => {
+  const capped = keys.slice(0, PURGE_CAP);
+  // Cache entries are keyed by the full request URL; publicUrl builds exactly the
+  // form the world fetches (and `share` prints), so the delete matches the entry.
+  await Promise.all(capped.map((k) => caches.default.delete(new Request(publicUrl(origin, k)))));
+  await purgeZone(
+    env,
+    capped.map((k) => publicUrl(env.CDN_PUBLIC_ORIGIN || origin, k))
+  );
+};
 // Only the explorer itself is gated; object paths (the CDN) + auth pages are public.
 const isAdminPath = (path: string) => path === "/" || path.startsWith("/api/");
 
@@ -156,7 +213,7 @@ app.post("/api/move", async (c) => {
         results.push({ key: k, ok: false, error: errMsg(e) });
       }
     }
-    await purgeEdge(new URL(c.req.url).origin, purge);
+    await purgeEdge(c.env, new URL(c.req.url).origin, purge);
     return c.json({ ok: results.every((r) => r.ok), moved, results });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);
@@ -168,7 +225,7 @@ app.post("/api/rename", async (c) => {
     const { key, name } = await c.req.json();
     if (!key) throw new Error("missing 'key'");
     const m = await rename(c.env.BUCKET, key, name);
-    await purgeEdge(new URL(c.req.url).origin, m.purge);
+    await purgeEdge(c.env, new URL(c.req.url).origin, m.purge);
     return c.json({ ok: true, renamed: m.count });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);
@@ -194,7 +251,7 @@ app.post("/api/delete", async (c) => {
         results.push({ key: k, ok: false, error: errMsg(e) });
       }
     }
-    await purgeEdge(new URL(c.req.url).origin, purge);
+    await purgeEdge(c.env, new URL(c.req.url).origin, purge);
     return c.json({ ok: results.every((r) => r.ok), deleted, results });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);
@@ -232,7 +289,7 @@ app.post("/api/upload", async (c) => {
       customMetadata: permanent ? { permanent: "1" } : undefined,
     });
     const origin = new URL(c.req.url).origin;
-    await purgeEdge(origin, [key]); // an overwritten key must serve the new bytes immediately
+    await purgeEdge(c.env, origin, [key]); // an overwritten key must serve the new bytes immediately
     return c.json({ ok: true, key, url: publicUrl(origin, key), permanent });
   } catch (e) {
     return c.json({ error: errMsg(e) }, 400);

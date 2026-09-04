@@ -28,6 +28,21 @@
   // R2 bucket, same secrets — but never owns the custom domain or runs the cron.
   "preview_urls": true,
 
+  // Cache purge (src/worker.ts `purgeEdge`). The Cache API only clears the POP
+  // the Worker ran in, so a write also calls Cloudflare's zone purge API to
+  // invalidate every POP — that's what makes "an overwrite is visible
+  // immediately" true for an OTA appcast read from anywhere, not just from the
+  // machine that published it. Neither value is a credential: the zone id is in
+  // every dashboard URL, and the public origin is the whole point of the CDN. The
+  // token that goes with them (CDN_PURGE_TOKEN) is a secret — see below. A write
+  // always purges CDN_PUBLIC_ORIGIN, never the request's: previews share these
+  // bindings, so a preview upload mutates the live bucket and must invalidate the
+  // live domain.
+  "vars": {
+    "CDN_ZONE_ID": "f15a4dd4342a021564ae984134488fce",
+    "CDN_PUBLIC_ORIGIN": "https://cdn.ramonfabrega.com"
+  },
+
   // Font bytes for the og:image cards (src/card.ts) — bundled as raw ArrayBuffers.
   // takumi's WASM module needs no rule: wrangler resolves the package's `workerd`
   // export condition and compiles the .wasm import natively.
@@ -40,5 +55,8 @@
   "triggers": { "crons": ["17 6 * * *"] }
 
   // Secrets (set with `wrangler secret put`, or .dev.vars locally):
-  //   CDN_PASSWORD, CDN_SESSION_SECRET, CDN_UPLOAD_TOKEN
+  //   CDN_PASSWORD, CDN_SESSION_SECRET, CDN_UPLOAD_TOKEN, CDN_PURGE_TOKEN
+  // CDN_PURGE_TOKEN is a Cloudflare API token scoped to Zone → Cache Purge on
+  // ramonfabrega.com and nothing else. Absent ⇒ the purge is local-POP only (the
+  // pre-#49 behavior), never an error.
 }
