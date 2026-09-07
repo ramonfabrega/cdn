@@ -147,6 +147,17 @@ describe("folder share pages", () => {
     );
     expect(html).toContain('name="twitter:card" content="summary_large_image"');
   });
+
+  // The brand is derived, not configured: first label of the request host in
+  // bold, the zone after it. That's what makes this repo a template — a fork on
+  // its own domain wears its own name with nothing to set.
+  test("brands itself with the request host, in the title and the footer", async () => {
+    await env.BUCKET.put("brandy/x.txt", "x");
+    const html = await (await SELF.fetch("https://drop.example.org/brandy/")).text();
+    expect(html).toContain("<title>brandy · drop</title>");
+    expect(html).toContain("<b>drop</b>.example.org");
+    expect(html).not.toContain("cdn.test");
+  });
 });
 
 describe("og:image cards (GET /.og/<prefix>.png)", () => {
@@ -276,6 +287,12 @@ describe("auth gate", () => {
     expect(login.status).toBe(200);
     expect(await login.text()).toContain("password");
   });
+
+  test("the login page brands itself with the request host", async () => {
+    const html = await (await SELF.fetch("https://drop.example.org/login")).text();
+    expect(html).toContain("<title>drop · sign in</title>");
+    expect(html).toContain("<b>drop</b>.example.org");
+  });
 });
 
 describe("explorer root (streamed shell + embedded tree)", () => {
@@ -320,6 +337,19 @@ describe("explorer root (streamed shell + embedded tree)", () => {
     expect(html).toContain("window.__tree=");
     expect(html).not.toContain("</script><b>");
     expect(html).toContain("\\u003c/script>");
+  });
+
+  // The shell is a static asset with two comment slots; the Worker fills them
+  // from the request host on the way out (throwing if either slot is missing, so
+  // an edit to index.html can't silently drop the brand).
+  test("fills the shell's brand slots from the request host", async () => {
+    const res = await SELF.fetch("https://drop.example.org/", {
+      headers: { cookie: await sessionCookie() },
+    });
+    const html = await res.text();
+    expect(html).toContain("<title>drop · files</title>");
+    expect(html).toContain('<b>drop</b><span class="host">.example.org</span>');
+    expect(html).not.toContain("<!--brand-->");
   });
 });
 

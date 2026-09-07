@@ -3,13 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>cdn · files</title>
+<!-- The two comment slots below (title, brand) are the shell's ONLY templating:
+     worker.ts fills each from the REQUEST host (brand() in src/lib/ui.ts), so no
+     domain of anyone's is baked into the template and a preview build labels
+     itself. This file is never served raw — the / route is its only reader, and
+     it throws if a slot goes missing. -->
+<title><!--title--></title>
 <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header>
     <button type="button" class="railbtn" id="railbtn" aria-label="Folders">☰</button>
-    <span class="brand"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z"/><path d="M2 8v11a2 2 0 0 0 2 2h14"/></svg><b>cdn</b><span class="host">.ramonfabrega.com</span></span>
+    <span class="brand"><svg class="ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 17a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3.9a2 2 0 0 1-1.69-.9l-.81-1.2a2 2 0 0 0-1.67-.9H8a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2Z"/><path d="M2 8v11a2 2 0 0 0 2 2h14"/></svg><!--brand--></span>
     <label class="search">
       <span class="sicon">⌕</span>
       <input id="q" type="search" placeholder="search files…" autocomplete="off" spellcheck="false">

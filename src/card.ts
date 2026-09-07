@@ -283,7 +283,10 @@ function row(name: string, badge: string, hue: string | null, size: string): Nod
   );
 }
 
+/** `host` is the request's — the card is stamped with the host that rendered it,
+    so an unfurl of a preview link never advertises the production domain. */
 export function folderCard(
+  host: string,
   prefix: string,
   files: Entry[],
   folders: string[],
@@ -384,7 +387,7 @@ export function folderCard(
           },
           [sunburst(prefix, subtree, items, subTotal ? fmtSize(subTotal) : "")]
         ),
-        text("cdn.ramonfabrega.com", { fontSize: 26, fontWeight: 600, color: C.faint }),
+        text(host, { fontSize: 26, fontWeight: 600, color: C.faint }),
       ]),
       // listing column: the folder page in miniature
       panel,

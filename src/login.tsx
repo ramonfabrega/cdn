@@ -3,7 +3,7 @@
 
 import type { FC } from "hono/jsx";
 
-import { BASE_TOKENS } from "./lib/ui.ts";
+import { BASE_TOKENS, brand } from "./lib/ui.ts";
 
 const CSS = `
   :root{
@@ -31,25 +31,32 @@ const CSS = `
   button:hover{filter:brightness(1.08)}
   .err{color:var(--red);font-size:13px;margin:0}`;
 
-const Login: FC<{ error?: string }> = ({ error }) => (
-  <html lang="en">
-    <head>
-      <meta charset="utf-8" />
-      <meta name="viewport" content="width=device-width,initial-scale=1" />
-      <title>cdn · sign in</title>
-      <style dangerouslySetInnerHTML={{ __html: CSS }} />
-    </head>
-    <body>
-      <form method="post" action="/login">
-        <h1>
-          🔒 <b>cdn</b>.ramonfabrega.com
-        </h1>
-        {error && <p class="err">{error}</p>}
-        <input type="password" name="password" placeholder="password" autofocus required />
-        <button type="submit">Enter</button>
-      </form>
-    </body>
-  </html>
-);
+const Login: FC<{ host: string; error?: string }> = ({ host, error }) => {
+  const { name, rest } = brand(host);
+  return (
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width,initial-scale=1" />
+        <title>{name} · sign in</title>
+        <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      </head>
+      <body>
+        <form method="post" action="/login">
+          <h1>
+            🔒 <b>{name}</b>
+            {rest}
+          </h1>
+          {error && <p class="err">{error}</p>}
+          <input type="password" name="password" placeholder="password" autofocus required />
+          <button type="submit">Enter</button>
+        </form>
+      </body>
+    </html>
+  );
+};
 
-export const loginPage = (error?: string): string => `<!doctype html>${<Login error={error} />}`;
+/** `host` is the request's — the login page brands itself with the host you
+    typed, so a preview build never claims to be production. */
+export const loginPage = (host: string, error?: string): string =>
+  `<!doctype html>${<Login host={host} error={error} />}`;

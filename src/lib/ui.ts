@@ -42,3 +42,28 @@ export const fmtSize = (b: number) => {
 
 export const fmtDate = (s: string) =>
   new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+/** Split a request host into the brand lockup every page wears: first label is
+    the name (bold), the rest is the zone (dimmed) — `cdn` + `.example.com`. A
+    single-label host (`localhost:8787`) is all name. Nothing here is configured:
+    the Worker brands itself with whatever host you reached it on, so a fork, a
+    preview build and `wrangler dev` are each labelled correctly with no var to
+    set — and a template ships with no domain of its author's baked in. */
+export const brand = (host: string): { name: string; rest: string } => {
+  const dot = host.indexOf(".");
+  return dot === -1
+    ? { name: host, rest: "" }
+    : { name: host.slice(0, dot), rest: host.slice(dot) };
+};
+
+const ENTITIES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+};
+
+/** Escape for interpolation into raw HTML. The .tsx pages get this free from
+    hono/jsx; the explorer shell is a string-substituted asset, so it escapes by
+    hand — the host is a request header, i.e. attacker-controlled input. */
+export const escapeHtml = (s: string) => s.replace(/[&<>"]/g, (c) => ENTITIES[c] ?? c);

@@ -7,7 +7,7 @@
 import type { FC } from "hono/jsx";
 
 import { publicUrl } from "./lib/cdn.ts";
-import { BADGE, BASE_TOKENS, fmtDate, fmtSize, href } from "./lib/ui.ts";
+import { BADGE, BASE_TOKENS, brand, fmtDate, fmtSize, href } from "./lib/ui.ts";
 import type { Entry } from "./storage.ts";
 
 const CSS = `
@@ -140,6 +140,9 @@ const Page: FC<{ origin: string; prefix: string; files: Entry[]; folders: string
   folders,
 }) => {
   const name = prefix.replace(/\/$/, "").split("/").pop() ?? prefix;
+  // The brand is the host that served this page — the footer and the title say
+  // where the reader actually is, not where the author's instance lives.
+  const { name: site, rest: zone } = brand(new URL(origin).host);
   const total = files.reduce((n, f) => n + f.size, 0);
   const sorted = [...files].sort((a, b) =>
     a.key.localeCompare(b.key, undefined, { numeric: true })
@@ -154,7 +157,7 @@ const Page: FC<{ origin: string; prefix: string; files: Entry[]; folders: string
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <meta name="robots" content="noindex" />
-        <title>{name} · cdn</title>
+        <title>{`${name} · ${site}`}</title>
         {/* unfurl card — /.og/<prefix>.png (see src/card.ts). Absolute URLs, as
             scrapers require — on the REQUEST origin, not a canonical domain: the
             Worker answers on several hosts (custom domain, preview builds, dev),
@@ -201,7 +204,8 @@ const Page: FC<{ origin: string; prefix: string; files: Entry[]; folders: string
             )}
           </div>
           <footer>
-            <b>cdn</b>.ramonfabrega.com
+            <b>{site}</b>
+            {zone}
           </footer>
         </div>
       </body>

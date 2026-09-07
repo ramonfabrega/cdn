@@ -20,6 +20,7 @@ import { ImageResponse } from "takumi-js/response";
 import { CARD_FONTS, folderCard } from "./card.ts";
 import { folderPage } from "./folder.tsx";
 import { mimeFor, publicUrl } from "./lib/cdn.ts";
+import { brand, escapeHtml } from "./lib/ui.ts";
 import { loginPage } from "./login.tsx";
 import {
   createFolder,
@@ -148,7 +149,7 @@ app.use("*", async (c, next) => {
 app.get("/health", (c) => c.text("ok"));
 
 // ── login / logout ──────────────────────────────────────────────────────────
-app.get("/login", (c) => c.html(loginPage()));
+app.get("/login", (c) => c.html(loginPage(new URL(c.req.url).host)));
 
 app.post("/login", async (c) => {
   const body = await c.req.parseBody();
@@ -162,7 +163,7 @@ app.post("/login", async (c) => {
     });
     return c.redirect("/");
   }
-  return c.html(loginPage("Wrong password."), 401);
+  return c.html(loginPage(new URL(c.req.url).host, "Wrong password."), 401);
 });
 
 app.get("/logout", (c) => {
@@ -328,6 +329,14 @@ const readAsset = (env: Env, path: string) =>
 // flushes first; the data blob + inlined app.js stream in after R2 resolves.
 const JS_TAG = '<script type="module" src="/app.js"></script>';
 
+// The shell's two brand slots (see public/index.html). Filled from the REQUEST
+// host, so the explorer wears the domain you're on — the template ships with
+// nobody's domain in it, and a preview build never claims to be production.
+const fill = (html: string, slot: string, value: string) => {
+  if (!html.includes(slot)) throw new Error(`inline marker missing: ${slot}`);
+  return html.replace(slot, () => value);
+};
+
 app.get("/", async (c) => {
   const [html, css, js] = await Promise.all([
     readAsset(c.env, "/index.html"),
@@ -336,9 +345,18 @@ app.get("/", async (c) => {
   ]);
   const idx = html.indexOf(JS_TAG);
   if (idx === -1) throw new Error(`inline marker missing: ${JS_TAG}`);
-  const shell = html
-    .slice(0, idx)
-    .replace('<link rel="stylesheet" href="/styles.css">', () => `<style>${css}</style>`);
+  const { name, rest } = brand(new URL(c.req.url).host);
+  const shell = fill(
+    fill(
+      html
+        .slice(0, idx)
+        .replace('<link rel="stylesheet" href="/styles.css">', () => `<style>${css}</style>`),
+      "<!--title-->",
+      `${escapeHtml(name)} · files`
+    ),
+    "<!--brand-->",
+    `<b>${escapeHtml(name)}</b><span class="host">${escapeHtml(rest)}</span>`
+  );
   const tail = html.slice(idx + JS_TAG.length); // "\n</body>\n</html>\n"
 
   c.header("content-type", "text/html; charset=utf-8");
@@ -369,7 +387,7 @@ app.get("/.og/*", async (c) => {
   if (!files.length && !folders.length && !(await c.env.BUCKET.head(`${prefix}.keep`))) {
     return c.notFound();
   }
-  return new ImageResponse(folderCard(prefix, files, folders, subtree), {
+  return new ImageResponse(folderCard(url.host, prefix, files, folders, subtree), {
     width: 1200,
     height: 630,
     format: "png",
