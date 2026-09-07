@@ -49,6 +49,46 @@ world-readable token, say — the step fails loudly and says the secret is only
 shown once, because at that point the value is genuinely gone and the fix is to
 delete the secret and re-run rather than to hunt for it.
 
+## Resolving a permission by name needs the scope too (2026-09-07)
+
+`cdn setup` resolves the Cache Purge permission group by NAME at runtime rather
+than hardcoding its id, because Cloudflare publishes no id list and says the
+name is "cosmetic and subject to change" — an unverifiable constant being exactly
+what this project keeps refusing to ship. That reasoning still holds. What was
+missing was the other half of the key.
+
+**Listing a real account returned 389 permission groups, and seven names appear
+twice** — once zone-scoped, once account-scoped:
+
+```
+Access: Apps and Policies Read / Write / Revoke
+Disable ESC Read / Write
+Logs Read / Write
+```
+
+The resolver did an exact-name `.find()`, which takes whichever the API happens
+to return first. For `Cache Purge` that is harmless — it is unique, and now
+verified so — but "harmless for the one name we currently use" is a property of
+today's call sites, not of the function. A token minted against the wrong half of
+an ambiguous pair is a credential that looks right in the dashboard and fails at
+the moment it is used.
+
+So the scope is a required argument, and ambiguity is an error rather than a coin
+flip: the caller says which scope it means, no match at that scope says so
+distinctly from "no such name", and two matches refuse and print both ids for a
+human to look at. The tests use the real duplicate — `Access: Apps and Policies
+Write` — in both orders, so a regression to "first match" fails one of them.
+
+**It is also a trap for the person building the setup token**, which is why the
+README now says the Access permissions must be the ACCOUNT-scoped ones. The
+dashboard shows them under whichever resource you selected, so it is easy to
+grant the zone-scoped half and get a token that lists correctly and cannot create
+an application.
+
+None of this was reachable by reading. It came out of one call with a token
+granted for a different purpose entirely — looking for a `key` field that turned
+out not to exist.
+
 ## master is production, and previews are the staging (2026-09-07)
 
 This was true before it was decided — the dotfiles copy did it, and the template

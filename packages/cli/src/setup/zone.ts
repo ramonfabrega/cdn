@@ -109,10 +109,15 @@ export async function setBrowserCacheTtl(
   return { ok: true, result: readTtl(res.result) };
 }
 
-export type PermissionGroup = { id: string; name: string };
+export type PermissionGroup = { id: string; name: string; scopes: string[] };
+
+/** The two scope strings a permission group carries. A group is scoped to the
+    account or to a zone, and several names exist in BOTH — see permissionGroup. */
+export const ACCOUNT_SCOPE = "com.cloudflare.api.account";
+export const ZONE_SCOPE = "com.cloudflare.api.account.zone";
 
 /**
- * Resolve a permission group id by name, at runtime.
+ * Resolve a permission group id by name AND scope, at runtime.
  *
  * Deliberately not a hardcoded id, and the docs agree: "We recommend using `id`
  * as the key for interacting with Cloudflare APIs; the permission `name` is
@@ -120,11 +125,26 @@ export type PermissionGroup = { id: string; name: string };
  * their IDs, use the List permission groups endpoint." A constant here would be
  * a number nobody could check, which is exactly the class of thing this project
  * keeps refusing to ship.
+ *
+ * THE SCOPE IS NOT OPTIONAL, and that is not caution — it is measured. Listing
+ * a real account on 2026-09-07 returned 389 groups, of which SEVEN names appear
+ * twice, once zone-scoped and once account-scoped:
+ *
+ *   Access: Apps and Policies Read / Write / Revoke, Disable ESC Read / Write,
+ *   Logs Read / Write
+ *
+ * A name-only `.find()` takes whichever the API happens to return first. For
+ * `Cache Purge` that is harmless — it is unique, verified — but a token minted
+ * against the wrong half of an ambiguous pair is a credential that looks right
+ * and does not work, or works somewhere it should not. So ambiguity is an error
+ * here, never a coin flip: a caller says which scope it means, and two matches
+ * refuse rather than guess.
  */
 export async function permissionGroup(
   cf: CloudflareOptions,
   accountId: string,
-  name: string
+  name: string,
+  scope: string
 ): Promise<ApiResult<PermissionGroup>> {
   const query = new URLSearchParams({ name });
   const res = await call<unknown>(
@@ -138,20 +158,42 @@ export async function permissionGroup(
       if (typeof g !== "object" || g === null) return undefined;
       const id = Reflect.get(g, "id");
       const groupName = Reflect.get(g, "name");
+      const scopes = Reflect.get(g, "scopes");
       return typeof id === "string" && typeof groupName === "string"
-        ? { id, name: groupName }
+        ? {
+            id,
+            name: groupName,
+            scopes: Array.isArray(scopes) ? scopes.filter((v) => typeof v === "string") : [],
+          }
         : undefined;
     })
     .filter((g): g is PermissionGroup => g !== undefined);
-  // Exact match: the filter is a substring search, and "Cache Purge" must not
-  // quietly become something merely similar.
-  const exact = groups.find((g) => g.name === name);
-  return exact
-    ? { ok: true, result: exact }
-    : {
-        ok: false,
-        error: `no permission group named "${name}" on this account (found: ${groups.map((g) => g.name).join(", ") || "none"})`,
-      };
+
+  // Exact name: the query parameter is a substring search, and "Cache Purge"
+  // must not quietly become something merely similar.
+  const named = groups.filter((g) => g.name === name);
+  if (!named.length) {
+    return {
+      ok: false,
+      error: `no permission group named "${name}" on this account (found: ${groups.map((g) => g.name).join(", ") || "none"})`,
+    };
+  }
+
+  const scoped = named.filter((g) => g.scopes.includes(scope));
+  const [only, ...rest] = scoped;
+  if (!only) {
+    return {
+      ok: false,
+      error: `permission group "${name}" exists but not with scope ${scope} (it has: ${named.flatMap((g) => g.scopes).join(", ") || "no scopes"})`,
+    };
+  }
+  if (rest.length) {
+    return {
+      ok: false,
+      error: `permission group "${name}" is ambiguous at scope ${scope} — ${[only, ...rest].map((g) => g.id).join(", ")} all match, so this cannot be resolved by name`,
+    };
+  }
+  return { ok: true, result: only };
 }
 
 /** The name is exactly this, per the API-token permissions reference. */

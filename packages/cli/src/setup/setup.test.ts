@@ -11,6 +11,7 @@ import { describe, expect, test } from "bun:test";
 import { readOnlyFetch } from "../cloudflare.ts";
 import { runSetup, type SetupReport } from "./index.ts";
 import { type Command, type Runner, recordingRunner, runCommand } from "./wrangler.ts";
+import { ACCOUNT_SCOPE, permissionGroup, ZONE_SCOPE } from "./zone.ts";
 
 const ACCOUNT = "acc123";
 const ZONE = { id: "zone123", name: "example.com" };
@@ -660,6 +661,68 @@ describe("failing honestly", () => {
     expect(report.cannotDo).toHaveLength(2);
     expect(report.cannotDo.join(" ")).toContain("identity provider");
     expect(report.cannotDo.join(" ")).toContain("cannot see");
+  });
+});
+
+describe("permissionGroup — resolved by name AND scope", () => {
+  // Measured against a real account, 2026-09-07: 389 permission groups, of which
+  // SEVEN names appear twice — once zone-scoped, once account-scoped. "Access:
+  // Apps and Policies Write" is one of them, and it is a permission this
+  // project's own README tells you to grant. A name-only lookup takes whichever
+  // the API returns first, which is a coin flip nobody would notice losing.
+  const groups = (result: unknown): typeof globalThis.fetch => {
+    const wrapped = async () => Response.json({ success: true, errors: [], messages: [], result });
+    return wrapped as typeof globalThis.fetch;
+  };
+  const cf = (result: unknown) => ({ token: "t", fetch: groups(result) });
+
+  const AMBIGUOUS = [
+    { id: "zone-half", name: "Access: Apps and Policies Write", scopes: [ZONE_SCOPE] },
+    { id: "account-half", name: "Access: Apps and Policies Write", scopes: [ACCOUNT_SCOPE] },
+  ];
+
+  test("picks the half the caller asked for, not the first one returned", async () => {
+    const wanted = "Access: Apps and Policies Write";
+    const account = await permissionGroup(cf(AMBIGUOUS), "acc", wanted, ACCOUNT_SCOPE);
+    expect(account.ok && account.result.id).toBe("account-half");
+
+    // Same list, same name, other scope — and the ORDER is unchanged, so this
+    // fails if the resolution is really "first match".
+    const zone = await permissionGroup(cf(AMBIGUOUS), "acc", wanted, ZONE_SCOPE);
+    expect(zone.ok && zone.result.id).toBe("zone-half");
+  });
+
+  test("refuses rather than guessing when two match the same scope", async () => {
+    const both = [
+      { id: "a", name: "Cache Purge", scopes: [ZONE_SCOPE] },
+      { id: "b", name: "Cache Purge", scopes: [ZONE_SCOPE] },
+    ];
+    const res = await permissionGroup(cf(both), "acc", "Cache Purge", ZONE_SCOPE);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toContain("ambiguous");
+    // Names both ids, because the next move is a human looking at them.
+    expect(res.error).toContain("a, b");
+  });
+
+  test("a name that exists at another scope says so, rather than 'not found'", async () => {
+    const res = await permissionGroup(
+      cf(AMBIGUOUS),
+      "acc",
+      "Access: Apps and Policies Write",
+      "com.cloudflare.api.user"
+    );
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toContain("exists but not with scope");
+  });
+
+  test("still rejects a merely-similar name — the query is a substring search", async () => {
+    const similar = [{ id: "x", name: "Cache Purge Everything", scopes: [ZONE_SCOPE] }];
+    const res = await permissionGroup(cf(similar), "acc", "Cache Purge", ZONE_SCOPE);
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toContain("no permission group named");
   });
 });
 

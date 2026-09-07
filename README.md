@@ -105,12 +105,18 @@ Create it at **Manage Account → Account API Tokens** with:
 | `Zone Read` | the zone | Finding the zone id from your domain |
 | `Zone Settings Read` + `Write` | the zone | Reading and setting Browser Cache TTL |
 | `Account API Tokens Read` + `Write` | the account | Listing permission groups, and minting the purge token |
-| `Access: Apps and Policies Read` + `Write` | the account | `--access` only — the application and its bypass |
+| `Access: Apps and Policies Read` + `Write` | **the account** | `--access` only — the application and its bypass |
 | `Access: Organizations, Identity Providers, and Groups Read` | the account | `--access` only — finding your team domain |
 | `Workers Scripts Read` | the account | `--access` only — resolving the Worker's id, so Access can protect the Worker rather than one hostname. Without it setup falls back and tells you. |
 
 The upload-token step needs no API permission at all — it goes through `wrangler`, which uses the
 session you already have from `wrangler login`.
+
+**Two of those names exist twice.** `Access: Apps and Policies Read` and `Write` are offered both
+account-scoped and zone-scoped — same name, different permission — and this needs the **account**
+one. Measured on a real account: of 389 permission groups, seven names are duplicated that way. The
+dashboard separates them by which resource you picked; if you grant the zone-scoped half, setup's
+Access step fails with a permission error on a token that looks correct in the list.
 
 Delete it when setup is done. Everything it configured keeps working; the CDN never uses it again.
 

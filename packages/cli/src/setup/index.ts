@@ -47,6 +47,7 @@ import {
   RESPECT_EXISTING_HEADERS,
   setBrowserCacheTtl,
   verifyToken,
+  ZONE_SCOPE,
 } from "./zone.ts";
 
 /** What a step did.
@@ -244,7 +245,7 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
       )
     );
   } else {
-    const group = await permissionGroup(cf, accountId, CACHE_PURGE_GROUP);
+    const group = await permissionGroup(cf, accountId, CACHE_PURGE_GROUP, ZONE_SCOPE);
     if (!group.ok) {
       steps.push(step("purge token", "failed", group.error));
     } else {
