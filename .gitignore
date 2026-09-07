@@ -3,6 +3,9 @@ node_modules/
 .wrangler/
 worker-configuration.d.ts
 
+# `wrangler deploy --dry-run --outdir dist` — a measurement, not an artifact
+dist/
+
 # Claude Code worktrees + macOS noise
 .claude/worktrees/
 .DS_Store

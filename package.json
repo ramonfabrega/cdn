@@ -11,6 +11,25 @@
     "lint": "biome check .",
     "check": "bun install --frozen-lockfile && biome check . && vitest run"
   },
+  "cloudflare": {
+    "bindings": {
+      "BUCKET": {
+        "description": "The R2 bucket this CDN serves. Every path on the Worker streams an object out of it, and `POST /api/upload` is the only way in."
+      },
+      "CDN_PASSWORD": {
+        "description": "Password for the file explorer at `/`. Object URLs stay public — this gates the browse/upload/delete UI only."
+      },
+      "CDN_SESSION_SECRET": {
+        "description": "Signs the explorer's session cookie. Generate one with `openssl rand -hex 32`. Changing it signs everyone out."
+      },
+      "CDN_UPLOAD_TOKEN": {
+        "description": "Bearer token for `POST /api/upload` — how scripts, CLIs and hooks write. Generate one with `openssl rand -hex 32`; keep it separate from your password."
+      },
+      "CDN_PURGE_TOKEN": {
+        "description": "**Optional, leave blank.** A [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens) scoped to *Zone → Cache Purge*, so an overwritten file goes stale on every edge POP at once. Only useful once you have added a custom domain — see the README."
+      }
+    }
+  },
   "dependencies": {
     "hono": "^4.6.0",
     "takumi-js": "^2.1.1"

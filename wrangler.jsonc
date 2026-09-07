@@ -5,7 +5,10 @@
   "compatibility_date": "2026-06-02",
   "observability": { "enabled": true },
 
-  // R2 binding → env.BUCKET (the same bucket the `share` CLI writes to).
+  // R2 binding → env.BUCKET. `bucket_name` is a DEFAULT, not a reference: the
+  // Deploy to Cloudflare button reads this file, provisions a bucket with this
+  // name on the presser's account and binds it. Rename it here before deploying
+  // if you want a different one; `wrangler deploy` provisions it either way.
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "cdn" }],
 
   // Static UI lives in public/. run_worker_first=true means the Worker runs for
@@ -17,31 +20,25 @@
     "run_worker_first": true
   },
 
-  // The Worker owns cdn.ramonfabrega.com: / = explorer, /<key> = object downloads
-  // (replaces R2's custom-domain serving). wrangler provisions the DNS + cert.
-  "routes": [{ "pattern": "cdn.ramonfabrega.com", "custom_domain": true }],
+  // No `routes` here: this repo is a template, and the zone belongs to whoever
+  // presses the button — the deploy can't provision a domain it doesn't own. A
+  // fresh deploy answers on <name>.<subdomain>.workers.dev and is fully working
+  // there. To put the Worker on your own domain, add ONE line and redeploy;
+  // wrangler provisions the DNS record and the certificate:
+  //
+  //   "routes": [{ "pattern": "cdn.example.com", "custom_domain": true }],
+  //
+  // Nothing else changes — every page brands itself from the request host
+  // (src/lib/ui.ts `brand`), so the explorer, the folder pages and the unfurl
+  // cards all start saying your domain the moment it resolves.
 
-  // Branch previews (Workers Builds runs `versions upload` off master) get a URL at
-  // <branch>-cdn-explorer.<subdomain>.workers.dev. Off by default since wrangler 4.34,
-  // and doubly so here: taking the custom domain dropped the workers.dev route, which
-  // is what preview URLs hang off. A preview shares this config's bindings — same live
-  // R2 bucket, same secrets — but never owns the custom domain or runs the cron.
+  // Branch previews (Workers Builds runs `versions upload` off non-production
+  // branches) get a URL at <branch>-<name>.<subdomain>.workers.dev. Off by
+  // default since wrangler 4.34. A preview shares this config's bindings — same
+  // R2 bucket, same secrets — but never owns a custom domain or runs the cron.
+  // Note that taking a custom domain drops the workers.dev route that preview
+  // URLs hang off; re-enable it with "workers_dev": true if you want both.
   "preview_urls": true,
-
-  // Cache purge (src/worker.ts `purgeEdge`). The Cache API only clears the POP
-  // the Worker ran in, so a write also calls Cloudflare's zone purge API to
-  // invalidate every POP — that's what makes "an overwrite is visible
-  // immediately" true for an OTA appcast read from anywhere, not just from the
-  // machine that published it. Neither value is a credential: the zone id is in
-  // every dashboard URL, and the public origin is the whole point of the CDN. The
-  // token that goes with them (CDN_PURGE_TOKEN) is a secret — see below. A write
-  // always purges CDN_PUBLIC_ORIGIN, never the request's: previews share these
-  // bindings, so a preview upload mutates the live bucket and must invalidate the
-  // live domain.
-  "vars": {
-    "CDN_ZONE_ID": "f15a4dd4342a021564ae984134488fce",
-    "CDN_PUBLIC_ORIGIN": "https://cdn.ramonfabrega.com"
-  },
 
   // Font bytes for the og:image cards (src/card.ts) — bundled as raw ArrayBuffers.
   // takumi's WASM module needs no rule: wrangler resolves the package's `workerd`
@@ -54,9 +51,37 @@
   // the bucket itself).
   "triggers": { "crons": ["17 6 * * *"] }
 
-  // Secrets (set with `wrangler secret put`, or .dev.vars locally):
-  //   CDN_PASSWORD, CDN_SESSION_SECRET, CDN_UPLOAD_TOKEN, CDN_PURGE_TOKEN
-  // CDN_PURGE_TOKEN is a Cloudflare API token scoped to Zone → Cache Purge on
-  // ramonfabrega.com and nothing else. Absent ⇒ the purge is local-POP only (the
-  // pre-#49 behavior), never an error.
+  // ── secrets ────────────────────────────────────────────────────────────────
+  // Four, all named in .dev.vars.example (which is what the Deploy to Cloudflare
+  // button prompts from, and what you copy to .dev.vars for local dev):
+  //
+  //   CDN_PASSWORD         the explorer's login
+  //   CDN_SESSION_SECRET   signs the session cookie
+  //   CDN_UPLOAD_TOKEN     bearer for POST /api/upload (the CLI, hooks, Shortcut)
+  //   CDN_PURGE_TOKEN      OPTIONAL — a Cloudflare API token scoped to
+  //                        Zone → Cache Purge on your zone and nothing else
+  //
+  // Set them after the first deploy with `wrangler secret put <NAME>`. Auth fails
+  // CLOSED: an unset CDN_PASSWORD rejects every login, an unset CDN_UPLOAD_TOKEN
+  // rejects every bearer. There are no defaults.
+  //
+  // ── optional vars: zone-wide cache purge ───────────────────────────────────
+  // A write purges the edge. The Cache API only clears the POP the Worker ran
+  // in, so with these two set the Worker also calls Cloudflare's zone purge API
+  // and invalidates EVERY POP — which is what makes "an overwrite is visible
+  // immediately" true for a feed read from anywhere, not just from the machine
+  // that published it. Absent (the template default) ⇒ local-POP purge only,
+  // never an error. Neither value is a credential: the zone id is in every
+  // dashboard URL and the public origin is the whole point of the CDN. The
+  // token that goes with them (CDN_PURGE_TOKEN) is the secret. Add once you
+  // have a custom domain:
+  //
+  //   "vars": {
+  //     "CDN_ZONE_ID": "<your zone id>",
+  //     "CDN_PUBLIC_ORIGIN": "https://cdn.example.com"
+  //   },
+  //
+  // A write always purges CDN_PUBLIC_ORIGIN, never the request's: previews share
+  // these bindings, so a preview upload mutates the live bucket and must
+  // invalidate the live domain.
 }

@@ -1,0 +1,33 @@
+# The Worker's four secrets, in dotenv format.
+#
+# Two readers:
+#   • the Deploy to Cloudflare button prompts for each of these at deploy time
+#     (descriptions come from package.json `cloudflare.bindings`)
+#   • local dev — `cp .dev.vars.example .dev.vars`, fill it in, and `wrangler dev`
+#     picks it up. .dev.vars is gitignored, and `bun run types` reads it to type
+#     env.CDN_* in the generated Env.
+#
+# On a deployed Worker they are set with `wrangler secret put <NAME>` (or in the
+# dashboard). Auth fails CLOSED: an unset CDN_PASSWORD rejects every login, an
+# unset CDN_UPLOAD_TOKEN rejects every bearer. There are no defaults.
+
+# The explorer's login password. Anything you'd type; the session cookie is what
+# gets reused, for 30 days.
+CDN_PASSWORD=change-me
+
+# Signs the session cookie. High entropy, and rotating it signs everyone out:
+#   openssl rand -hex 32
+CDN_SESSION_SECRET=change-me
+
+# Bearer for POST /api/upload — the write path used by scripts, the CLI, the
+# Claude Code hooks and the macOS Shortcut. A machine credential, distinct from
+# CDN_PASSWORD: it can upload, and it cannot reach the destructive APIs.
+#   openssl rand -hex 32
+CDN_UPLOAD_TOKEN=change-me
+
+# OPTIONAL. A Cloudflare API token scoped to Zone → Cache Purge on your zone and
+# nothing else. With it (plus the CDN_ZONE_ID / CDN_PUBLIC_ORIGIN vars in
+# wrangler.jsonc) a write invalidates every edge POP, so an overwrite is visible
+# immediately worldwide. Leave blank and the purge is local-POP only — the
+# fallback, not an error.
+CDN_PURGE_TOKEN=

@@ -360,7 +360,12 @@ describe("explorer root (streamed shell + embedded tree)", () => {
 // SELF runs in this isolate, so a stubbed global fetch catches the Worker's.
 describe("zone purge on write", () => {
   const BEARER = { authorization: "Bearer test-upload-token" };
-  const ZONE = "f15a4dd4342a021564ae984134488fce"; // wrangler.jsonc vars.CDN_ZONE_ID
+  // CDN_ZONE_ID and CDN_PUBLIC_ORIGIN are optional vars an INSTANCE adds to its
+  // own wrangler.jsonc once it owns a domain — the template ships without them,
+  // so the suite sets them per-test the same way a deployment sets them in
+  // config, and every other test in the file runs with the purge off.
+  const ZONE = "0123456789abcdef0123456789abcdef";
+  const PUBLIC = "https://cdn.example.com";
 
   type PurgeCall = { url: string; auth: string | null; files: string[] };
 
@@ -393,14 +398,18 @@ describe("zone purge on write", () => {
     return calls;
   };
 
-  // The token is set per-test rather than in vitest.config.ts, so every OTHER test
-  // in the suite runs with the zone purge off and makes no outbound request at all.
+  // Set per-test rather than in vitest.config.ts, so every OTHER test in the
+  // suite runs with the zone purge off and makes no outbound request at all.
   beforeEach(() => {
     env.CDN_PURGE_TOKEN = "test-purge-token";
+    Reflect.set(env, "CDN_ZONE_ID", ZONE);
+    Reflect.set(env, "CDN_PUBLIC_ORIGIN", PUBLIC);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
     env.CDN_PURGE_TOKEN = "";
+    Reflect.deleteProperty(env, "CDN_ZONE_ID");
+    Reflect.deleteProperty(env, "CDN_PUBLIC_ORIGIN");
   });
 
   test("an upload purges its public url zone-wide", async () => {
@@ -417,7 +426,7 @@ describe("zone purge on write", () => {
     // The PUBLIC origin, not the request's (cdn.test here): previews share prod's
     // bindings, so a preview upload mutates the live bucket and has to invalidate
     // the live domain rather than its own hostname.
-    expect(calls[0].files).toEqual(["https://cdn.ramonfabrega.com/ccc/appcast.xml"]);
+    expect(calls[0].files).toEqual(["https://cdn.example.com/ccc/appcast.xml"]);
   });
 
   test("a delete purges every key it removed", async () => {
@@ -433,8 +442,8 @@ describe("zone purge on write", () => {
     expect(res.status).toBe(200);
     expect(calls).toHaveLength(1);
     expect(calls[0].files.toSorted()).toEqual([
-      "https://cdn.ramonfabrega.com/gone/a.png",
-      "https://cdn.ramonfabrega.com/gone/b.png",
+      "https://cdn.example.com/gone/a.png",
+      "https://cdn.example.com/gone/b.png",
     ]);
   });
 
@@ -462,5 +471,21 @@ describe("zone purge on write", () => {
     });
     expect(res.status).toBe(200);
     expect(calls).toEqual([]);
+  });
+
+  // The template's own default: a fresh Deploy to Cloudflare has a token slot it
+  // was told to leave blank and no zone at all. The write must still succeed —
+  // this is the configuration most instances run, not a degraded one.
+  test("no zone var ⇒ local purge only, and the write still succeeds", async () => {
+    const calls = interceptPurge();
+    Reflect.deleteProperty(env, "CDN_ZONE_ID");
+    const res = await SELF.fetch(`${BASE}/api/upload?key=templated.txt`, {
+      method: "POST",
+      headers: BEARER,
+      body: "t",
+    });
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([]);
+    expect(await (await env.BUCKET.get("templated.txt"))?.text()).toBe("t");
   });
 });

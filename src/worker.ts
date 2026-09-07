@@ -55,33 +55,45 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 // merely looking old. The zone purge makes "an overwrite is visible immediately"
 // true everywhere instead of only where you happened to upload from.
 //
-// The zone purge always names the PUBLIC origin, never the request's: a preview
-// version shares production's bindings, so a write from a *.workers.dev preview
-// mutates the live bucket and must invalidate the live domain. The request origin
-// is purged locally too, so `wrangler dev` and previews re-read their own writes.
+// The zone purge always names the PUBLIC origin (CDN_PUBLIC_ORIGIN), never the
+// request's: a preview version shares production's bindings, so a write from a
+// *.workers.dev preview mutates the live bucket and must invalidate the live
+// domain. The request origin is purged locally too, so `wrangler dev` and
+// previews re-read their own writes. With no CDN_PUBLIC_ORIGIN set — the
+// template's default, before an instance has a domain — the request origin IS
+// the public one and the distinction collapses.
 //
 // Capped so a huge folder delete can't blow the per-request subrequest budget;
 // beyond the cap we let s-maxage do its job, as before.
 const PURGE_CAP = 100;
 const PURGE_BATCH = 30; // Cloudflare's purge-by-url limit per API call
 
+// CDN_ZONE_ID and CDN_PUBLIC_ORIGIN are OPTIONAL vars an INSTANCE adds to its
+// own wrangler.jsonc once it owns a custom domain. The template ships without
+// them on purpose — a fresh Deploy to Cloudflare has no zone and no domain yet,
+// and prompting for two values nobody can answer is not a one-click deploy — so
+// they are absent from the generated Env and read as what they are: config that
+// may or may not be there. Absent ⇒ the purge is local-POP only, never an error.
+const optionalVar = (env: Env, key: string): string | undefined => {
+  const value: unknown = Reflect.get(env, key);
+  return typeof value === "string" && value ? value : undefined;
+};
+
 const purgeZone = async (env: Env, urls: string[]) => {
-  // No token configured (tests, `wrangler dev`, a fresh deploy) ⇒ local-only
-  // purge, i.e. exactly the old behavior. Never fatal.
-  if (!env.CDN_PURGE_TOKEN || !env.CDN_ZONE_ID) return;
+  // No token or no zone configured (tests, `wrangler dev`, a fresh deploy) ⇒
+  // local-only purge, i.e. exactly the pre-#49 behavior. Never fatal.
+  const zone = optionalVar(env, "CDN_ZONE_ID");
+  if (!env.CDN_PURGE_TOKEN || !zone) return;
   for (let i = 0; i < urls.length; i += PURGE_BATCH) {
     const files = urls.slice(i, i + PURGE_BATCH);
-    const res = await fetch(
-      `https://api.cloudflare.com/client/v4/zones/${env.CDN_ZONE_ID}/purge_cache`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${env.CDN_PURGE_TOKEN}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ files }),
-      }
-    );
+    const res = await fetch(`https://api.cloudflare.com/client/v4/zones/${zone}/purge_cache`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${env.CDN_PURGE_TOKEN}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ files }),
+    });
     // A failed purge must NOT fail the write: the bytes are already in R2, and
     // telling `share` the upload failed would be a lie that makes release scripts
     // retry a write that succeeded. Log it instead (observability is on) — a
@@ -101,7 +113,7 @@ const purgeEdge = async (env: Env, origin: string, keys: string[]) => {
   await Promise.all(capped.map((k) => caches.default.delete(new Request(publicUrl(origin, k)))));
   await purgeZone(
     env,
-    capped.map((k) => publicUrl(env.CDN_PUBLIC_ORIGIN || origin, k))
+    capped.map((k) => publicUrl(optionalVar(env, "CDN_PUBLIC_ORIGIN") ?? origin, k))
   );
 };
 // Only the explorer itself is gated; object paths (the CDN) + auth pages are public.
