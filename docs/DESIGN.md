@@ -139,12 +139,27 @@ everything:
    had to put *something* in, and whatever they typed would become a real
    credential on a real Worker. `CDN_PURGE_TOKEN` is the sharp end: it must be a
    genuine Cloudflare API token or the purge fails on every write.
-2. **`cloudflare.bindings` descriptions do not render for secrets.** They render
-   for the R2 bucket — the first press showed one — and not for the secret
-   fields, which arrive as four bare uppercase names. Every word of guidance
-   written there was invisible at the moment it was needed.
+2. **The secret fields arrived as four bare uppercase names**, with no
+   descriptions, while the R2 bucket's description had rendered fine on the
+   previous screen.
 
-Those two together leave exactly one lever: **which keys appear in
+**That second observation was written up here as "descriptions do not render for
+secrets", and the next press disproved it.** With one key in the file, the field
+came up with its description rendered correctly above it. So the rule is not
+"secrets have no descriptions"; something else made them vanish that once, and
+the two candidates — the description then began with `**bold**` markdown, or the
+dialog had a stale manifest — are both unconfirmed. Neither is stated as fact.
+The entry stands as: *descriptions do render, and they went missing once under
+conditions not yet pinned down.*
+
+Recorded rather than quietly edited out, because the mistake is instructive and
+is exactly the one this project keeps catching in other people's documentation: a
+single observation written down as a rule. It survived twenty minutes. The
+finding that did hold — every field is required — held because it was a
+MECHANISM, the browser's own validation, rather than an ABSENCE. Absences are the
+observations that most deserve a second look before they become sentences.
+
+The required-ness alone leaves exactly one lever: **which keys appear in
 `.dev.vars.example` at all.** So it now lists one, `CDN_PASSWORD`, and the other
 three are comments. A commented key is not a field, the Worker treats all three
 as absent, and absent is already the well-defined safe state — no bearer
@@ -163,10 +178,22 @@ nothing in the repo knew this file was a user interface. Now something does.
 
 The general lesson is the one the whole day keeps repeating in different
 costumes: **the docs did not say any of this, and pressing the button did.** The
-prefill behaviour, the required-ness, the missing descriptions — three facts
-that shape the first experience every stranger has of this project, none
-documented, all cheap to observe once someone actually ran the flow instead of
-reading about it.
+prefill behaviour and the required-ness are two facts that shape the first
+experience every stranger has of this project, neither documented, both cheap to
+observe once someone ran the flow instead of reading about it — and the third
+thing the press "found" turned out to be wrong, which is also what running the
+flow is for.
+
+**One more the press turned up, in the same form:** a *"Protect with Cloudflare
+Access"* toggle. For this Worker it is a trap, because it protects the whole
+thing — `POST /api/upload` included — so Access answers every script's upload
+with a login page and the CLI, the hooks and the Shortcut break at once. That is
+precisely the failure the bypass application exists to prevent, and the toggle
+creates the protection without it. The README says to leave it off and run
+`cdn setup --access`, which makes the same Worker-level application *and* the
+path-scoped bypass. Setup also repairs it after the fact: `findWorkerApp` matches
+the existing application by destination rather than by name, so it reports
+`present` and the bypass step adds what is missing.
 
 ## The refusal that ended in a measurement (2026-09-07)
 
