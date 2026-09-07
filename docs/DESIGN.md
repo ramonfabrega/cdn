@@ -128,6 +128,46 @@ public CDN stays up (a fresh bucket is empty, and a secret momentarily lost
 should not take everyone's links down), while the authenticated surface closes.
 Fail closed on the door, not on the road.
 
+**Then the second press measured the dialog, and half of that design was
+wrong.** With the empty values shipped, the fields came up blank as intended —
+and two things the documentation does not mention anywhere turned out to govern
+everything:
+
+1. **Every field is required.** Submitting an empty one produces the browser's
+   own "Please fill out this field." There is no optional prompt. So "leave the
+   other three blank" was not advice a presser could follow; it was a box they
+   had to put *something* in, and whatever they typed would become a real
+   credential on a real Worker. `CDN_PURGE_TOKEN` is the sharp end: it must be a
+   genuine Cloudflare API token or the purge fails on every write.
+2. **`cloudflare.bindings` descriptions do not render for secrets.** They render
+   for the R2 bucket — the first press showed one — and not for the secret
+   fields, which arrive as four bare uppercase names. Every word of guidance
+   written there was invisible at the moment it was needed.
+
+Those two together leave exactly one lever: **which keys appear in
+`.dev.vars.example` at all.** So it now lists one, `CDN_PASSWORD`, and the other
+three are comments. A commented key is not a field, the Worker treats all three
+as absent, and absent is already the well-defined safe state — no bearer
+accepted, no purge beyond the local POP, the cookie key derived from the
+password. The dialog asks for one thing, that thing is genuinely required, and
+nobody is asked to invent a Cloudflare API token to get past a form.
+
+**The file is the form, so it is tested like one.**
+`packages/cli/src/deploy-dialog.test.ts` asserts that exactly one key is
+uncommented, that it is `CDN_PASSWORD`, that its value is empty, that the other
+three are still *documented* while not being fields, and that every `env.CDN_*`
+the Worker reads is accounted for somewhere in the file. This file has been
+wrong twice in one day — `change-me` values, then three fields that could not be
+left blank — and neither mistake was catchable by anything in the repo, because
+nothing in the repo knew this file was a user interface. Now something does.
+
+The general lesson is the one the whole day keeps repeating in different
+costumes: **the docs did not say any of this, and pressing the button did.** The
+prefill behaviour, the required-ness, the missing descriptions — three facts
+that shape the first experience every stranger has of this project, none
+documented, all cheap to observe once someone actually ran the flow instead of
+reading about it.
+
 ## The refusal that ended in a measurement (2026-09-07)
 
 `cdn setup` sets Browser Cache TTL now. The interesting part is not the write —
