@@ -1,0 +1,24 @@
+{
+  "name": "cdn-client",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "The client side of the cdn Worker: the `cdn` CLI, the Claude Code mirror hooks, and the host/token resolution all three share.",
+  "bin": {
+    "cdn": "./bin/cdn.ts"
+  },
+  "files": [
+    "bin",
+    "src",
+    "hooks",
+    "skills"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "skill": "bun bin/cdn.ts --llms > skills/cdn/SKILL.md"
+  },
+  "dependencies": {
+    "incur": "^0.5.1",
+    "zod": "^4.5.4"
+  }
+}

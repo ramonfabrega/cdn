@@ -290,12 +290,15 @@ describe("auth gate", () => {
 
   // `cdn auth login` verifies a token before writing it to disk; without this
   // route the only way to test a bearer was to upload a file with it.
-  test("GET /api/auth is 204 for the upload bearer and 401 for anything else", async () => {
+  test("GET /api/auth answers the contract for the upload bearer, 401 for anything else", async () => {
     const ok = await SELF.fetch(`${BASE}/api/auth`, {
       headers: { authorization: "Bearer test-upload-token" },
     });
-    expect(ok.status).toBe(204);
-    expect(await ok.text()).toBe("");
+    expect(ok.status).toBe(200);
+    // The client's SUPPORTED_CONTRACTS is the other half of this number. Both
+    // live in this repo so one commit moves them together — if you changed one
+    // and this test failed, the other is the thing that also needs changing.
+    expect(await ok.json()).toEqual({ contract: 1 });
 
     expect((await SELF.fetch(`${BASE}/api/auth`)).status).toBe(401);
     expect(

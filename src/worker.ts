@@ -166,7 +166,7 @@ app.use("*", async (c, next) => {
 
 app.get("/health", (c) => c.text("ok"));
 
-// ── auth check ───────────────────────────────────────────────────────────────
+// ── auth check + contract handshake ──────────────────────────────────────────
 // A cheap authenticated no-op, so a client can find out whether its credential
 // works without writing anything. `cdn auth login` verifies a token before it
 // puts it on disk, and the only alternative was to upload a file — a side effect
@@ -174,9 +174,21 @@ app.get("/health", (c) => c.text("ok"));
 // when the token turns out to be wrong.
 //
 // The gate above does the rejecting: reaching this handler already means a valid
-// bearer or a valid session, so the body is just the good news. 204, because
-// there is nothing to say — the status IS the answer.
-app.get("/api/auth", (c) => c.body(null, 204));
+// bearer or a valid session, so the body is just the good news — plus the one
+// thing a client cannot guess.
+//
+// CONTRACT is the version of the request/response shapes this Worker implements.
+// It exists because the two sides are allowed to be different ages: this repo is
+// a template, so a fork can lag upstream by months while a client from today
+// talks to it. Announcing the number turns "a field I expected isn't there,
+// three calls in" into one legible error at the handshake. Its twin is
+// SUPPORTED_CONTRACTS in packages/cli/src/upload.ts — one repository, so one
+// commit moves both and one `bun run check` proves they agree.
+//
+// Bump it only for a change a current client cannot survive. Adding a field is
+// not one of those.
+const CONTRACT = 1;
+app.get("/api/auth", (c) => c.json({ contract: CONTRACT }));
 
 // ── login / logout ──────────────────────────────────────────────────────────
 app.get("/login", (c) => c.html(loginPage(new URL(c.req.url).host)));

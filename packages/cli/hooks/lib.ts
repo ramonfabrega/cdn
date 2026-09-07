@@ -4,8 +4,8 @@
 // hooks are two projections of the same three lines and only one of them should
 // own them.
 
-import { resolveTarget, type Target } from "../client/hosts.ts";
-import { originFor, upload as put } from "../client/upload.ts";
+import { resolveTarget, type Target } from "../src/hosts.ts";
+import { originFor, upload as put } from "../src/upload.ts";
 
 export type { Target };
 export { originFor, resolveTarget };

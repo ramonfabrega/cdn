@@ -76,13 +76,27 @@ export async function upload(
     : { ok: false, error: `${target.host} accepted the upload but returned no url` };
 }
 
-/** Verify a bearer without writing anything. `auth login` needs this: the only
-    other way to find out whether a token works is to upload a file with it,
-    which is a side effect nobody asked for while logging in. */
+/** Every contract version this client can speak. `GET /api/auth` answers with the
+    one the Worker implements, and the whole point of the number is that the two
+    sides can be different ages: a fork that lags upstream by a month still serves
+    contract 1, and today's client is happy. When a contract 2 arrives, it goes in
+    this list beside 1 rather than replacing it — dropping a version is a decision,
+    not a side effect of adding one.
+
+    Its twin lives in `src/worker.ts` (`CONTRACT`). They are in one repository so
+    that one commit can move both and one `bun run check` can prove they agree. */
+export const SUPPORTED_CONTRACTS = [1];
+
+export type Verified = { ok: true; contract: number } | { ok: false; error: string };
+
+/** Verify a bearer without writing anything, and learn which contract the far
+    side speaks. `auth login` needs both: the only other way to find out whether a
+    token works was to upload a file with it — a side effect nobody asked for
+    while logging in, which leaves litter exactly when the token is wrong. */
 export async function verify(
   target: Target,
   options: Pick<UploadOptions, "timeoutMs" | "fetch"> = {}
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<Verified> {
   const { timeoutMs = 15_000, fetch: doFetch = globalThis.fetch } = options;
   let res: Response;
   try {
@@ -96,7 +110,22 @@ export async function verify(
       error: `${target.host} unreachable: ${e instanceof Error ? e.message : String(e)}`,
     };
   }
-  return res.ok ? { ok: true } : { ok: false, error: describeFailure(target.host, res.status, "") };
+  if (!res.ok) return { ok: false, error: describeFailure(target.host, res.status, "") };
+
+  const body: unknown = await res.json().catch(() => null);
+  const contract = typeof body === "object" && body !== null ? Reflect.get(body, "contract") : null;
+  // An unknown contract is a typed error naming BOTH numbers, said here at the
+  // handshake — the alternative is a stranger failure three calls later, when
+  // some field this client expects turns out not to exist.
+  if (typeof contract !== "number" || !SUPPORTED_CONTRACTS.includes(contract)) {
+    return {
+      ok: false,
+      error:
+        `${target.host} speaks contract ${contract ?? "none"}; this client speaks ` +
+        `${SUPPORTED_CONTRACTS.join(", ")} — upgrade whichever is older`,
+    };
+  }
+  return { ok: true, contract };
 }
 
 // 401 is worth spelling out because it is always the token and the fix is a file

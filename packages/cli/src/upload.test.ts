@@ -8,7 +8,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { originFor, upload, verify } from "./upload.ts";
+import { originFor, SUPPORTED_CONTRACTS, upload, verify } from "./upload.ts";
 
 let dir = "";
 let src = "";
@@ -120,10 +120,10 @@ describe("upload", () => {
 describe("verify", () => {
   // Logging in should not have to upload a file to find out whether the token
   // works, so the Worker grew a cheap authenticated no-op for exactly this.
-  test("GETs /api/auth with the bearer", async () => {
-    const rec = recorder(() => new Response(null, { status: 204 }));
+  test("GETs /api/auth with the bearer and reports the contract", async () => {
+    const rec = recorder(() => Response.json({ contract: 1 }));
     const res = await verify(target, { fetch: rec.fetch });
-    expect(res.ok).toBe(true);
+    expect(res).toEqual({ ok: true, contract: 1 });
     expect(rec.seen[0]?.url).toBe("https://cdn.example.com/api/auth");
     expect(rec.seen[0]?.method).toBe("GET");
     expect(rec.seen[0]?.headers.get("authorization")).toBe("Bearer t0ken");
@@ -135,5 +135,24 @@ describe("verify", () => {
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.error).toContain("cdn auth login --host cdn.example.com");
+  });
+
+  // The two sides are allowed to be different ages — that is the point of the
+  // number. What must not happen is a client discovering the mismatch three calls
+  // later, as a field that isn't there.
+  test("a contract this client does not speak fails at the handshake, naming both", async () => {
+    const rec = recorder(() => Response.json({ contract: 7 }));
+    const res = await verify(target, { fetch: rec.fetch });
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.error).toContain("contract 7");
+    expect(res.error).toContain(SUPPORTED_CONTRACTS.join(", "));
+    expect(res.error).toContain("upgrade whichever is older");
+  });
+
+  test("an answer with no contract at all is treated as unknown", async () => {
+    const rec = recorder(() => Response.json({ ok: true }));
+    const res = await verify(target, { fetch: rec.fetch });
+    expect(res.ok).toBe(false);
   });
 });

@@ -6,9 +6,7 @@
       "name": "cdn-explorer",
       "dependencies": {
         "hono": "^4.6.0",
-        "incur": "^0.5.1",
         "takumi-js": "^2.1.1",
-        "zod": "^4.5.4",
       },
       "devDependencies": {
         "@biomejs/biome": "^2.4.16",
@@ -16,6 +14,17 @@
         "@types/bun": "^1.3.14",
         "vitest": "^4.1.8",
         "wrangler": "^4.97.0",
+      },
+    },
+    "packages/cli": {
+      "name": "cdn-client",
+      "version": "0.1.0",
+      "bin": {
+        "cdn": "./bin/cdn.ts",
+      },
+      "dependencies": {
+        "incur": "^0.5.1",
+        "zod": "^4.5.4",
       },
     },
   },
@@ -279,6 +288,8 @@
     "blake3-wasm": ["blake3-wasm@2.1.5", "", {}, "sha512-F1+K8EbfOZE49dtoPtmxUQrpXaBIl3ICvasLh+nJta0xkz+9kF/7uet9fLnwKqhDrmj6g+6K3Tw9yQPUg2ka5g=="],
 
     "bun-types": ["bun-types@1.3.14", "", { "dependencies": { "@types/node": "*" } }, "sha512-4N0ig0fEomHt5R0KCFWjovxow98rIoRwKolrYdCcknNwMekCXRnWEUvgu5soYV8QXtVsrUD8B95MBOZGPvr6KQ=="],
+
+    "cdn-client": ["cdn-client@workspace:packages/cli"],
 
     "chai": ["chai@6.2.2", "", {}, "sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg=="],
 
