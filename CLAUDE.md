@@ -24,6 +24,13 @@ Deploy to Cloudflare button imposes. So the repo is a *template*: the
 top-level config is the generic, button-ready one; an instance adds its
 custom domain as one route line after the first deploy.
 
+Phase 1 landed that (2026-09-07). The brand strings now come from the request
+host (`brand()` in `src/lib/ui.ts`) and the config carries no `routes` and no
+`vars` — so **nothing in this repo names a domain, and nothing should**. The
+optional purge vars are read through `optionalVar()` rather than declared, and
+`.dev.vars.example` + `package.json` `cloudflare.bindings` are what the button
+prompts from.
+
 Who invokes what, measured on the author's instance: sessions and hooks make
 most uploads; humans use the explorer's drop zone and the Shortcut; the CLI
 by hand is rare. Build order follows that: Worker + button first, hosts file +
@@ -88,8 +95,9 @@ cutover, which is a deliberate, one-time, human-approved sequence:
   optional handling over `as`.
 - Read `README.md` for the architecture, the caching policy, the
   dashboard-only settings (Workers Builds, zone Browser Cache TTL, the
-  bucket's lifecycle rule) and the purge-token recipe. It predates the
-  template turn and still says the author's domain in places; the template
-  pass rewrites those sections, it does not delete them.
-- Decision narrative goes in `docs/DESIGN.md` (create on the first real
-  decision); this file carries only what every session needs.
+  bucket's lifecycle rule) and the purge-token recipe. Phase 1 rewrote its
+  opening and its instance-specific passages; the author's operational log
+  came out with them and lives in the wiki. It names no domain — keep it
+  that way.
+- Decision narrative goes in `docs/DESIGN.md`; this file carries only what
+  every session needs.
