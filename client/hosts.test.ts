@@ -1,12 +1,12 @@
-// Runs in Bun (`bun test hooks/`), not workerd — these read the real filesystem,
+// Runs in Bun (`bun test client/`), not workerd — these read the real filesystem,
 // in a temp dir per test, and never touch the caller's ~/.config.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { hostsDir, parseDotenv, resolveTarget } from "./hosts.ts";
+import { hostsDir, listHosts, parseDotenv, resolveTarget } from "./hosts.ts";
 
 let root = "";
 let dir = "";
@@ -65,12 +65,39 @@ describe("parseDotenv", () => {
   });
 });
 
+describe("listHosts", () => {
+  test("names every host file and whether anyone else can read it", async () => {
+    await writeHost("cdn.example.com", "CDN_TOKEN=a\n");
+    await writeHost("files.work.example", "CDN_TOKEN=b\n");
+    await chmod(join(dir, "cdn.example.com.env"), 0o600);
+    await chmod(join(dir, "files.work.example.env"), 0o644);
+
+    const hosts = await listHosts(env());
+    expect(hosts.map((h) => h.host)).toEqual(["cdn.example.com", "files.work.example"]);
+    // A token the group or the world can read is a token to rotate; the owner
+    // bits are the owner's business.
+    expect(hosts[0]?.secure).toBe(true);
+    expect(hosts[1]?.secure).toBe(false);
+    expect(hosts[1]?.mode).toBe(0o644);
+  });
+
+  test("no directory is an empty list, not a throw", async () => {
+    expect(await listHosts({ XDG_CONFIG_HOME: join(root, "nope") })).toEqual([]);
+  });
+});
+
 describe("resolveTarget", () => {
   test("the sole host file is the default — nothing to configure", async () => {
     await writeHost("cdn.example.com", "CDN_TOKEN=from-file\n");
     expect(await resolveTarget(env())).toEqual({
       ok: true,
-      target: { host: "cdn.example.com", token: "from-file" },
+      target: {
+        host: "cdn.example.com",
+        token: "from-file",
+        source: "default",
+        tokenFrom: "file",
+        file: join(dir, "cdn.example.com.env"),
+      },
     });
   });
 
@@ -79,7 +106,13 @@ describe("resolveTarget", () => {
     await writeHost("files.work.example", "CDN_TOKEN=work\n");
     expect(await resolveTarget(env({ CDN_HOST: "files.work.example" }))).toEqual({
       ok: true,
-      target: { host: "files.work.example", token: "work" },
+      target: {
+        host: "files.work.example",
+        token: "work",
+        source: "CDN_HOST",
+        tokenFrom: "file",
+        file: join(dir, "files.work.example.env"),
+      },
     });
   });
 
@@ -99,14 +132,26 @@ describe("resolveTarget", () => {
   test("both env vars win outright — no file has to exist", async () => {
     expect(
       await resolveTarget(env({ CDN_HOST: "nowhere.example", CDN_TOKEN: "from-env" }))
-    ).toEqual({ ok: true, target: { host: "nowhere.example", token: "from-env" } });
+    ).toEqual({
+      ok: true,
+      target: { host: "nowhere.example", token: "from-env", source: "env", tokenFrom: "env" },
+    });
   });
 
+  // The precedence step is part of the answer, not trivia: `cdn auth status` has
+  // to be able to explain which one decided, and "the token came from somewhere
+  // other than the file you're looking at" is exactly the confusing case.
   test("CDN_TOKEN alone overrides the file's token, keeping its host", async () => {
     await writeHost("cdn.example.com", "CDN_TOKEN=from-file\n");
     expect(await resolveTarget(env({ CDN_TOKEN: "from-env" }))).toEqual({
       ok: true,
-      target: { host: "cdn.example.com", token: "from-env" },
+      target: {
+        host: "cdn.example.com",
+        token: "from-env",
+        source: "default",
+        tokenFrom: "env",
+        file: join(dir, "cdn.example.com.env"),
+      },
     });
   });
 

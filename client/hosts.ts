@@ -8,37 +8,69 @@
 // sections, because "which host" is then a filename: `ls` is the list command
 // and `rm` is the logout.
 //
-// Resolution follows clig.dev precedence — flags > env > config file. Flags
-// belong to the CLI, which does not exist yet; here it is env > file, decided
-// per variable:
+// Resolution follows clig.dev precedence — flags > env > config file. `--host`
+// is the CLI's flag and is applied by the CLI before calling in; below that it
+// is env > file, decided per variable:
 //
 //   CDN_HOST + CDN_TOKEN   both set → used as-is; no file has to exist at all
 //   CDN_HOST               set      → names which file under hosts/
 //   neither                         → exactly one *.env in hosts/ is the default
 //
 // Anything else is an error that names the path to create. Guessing between two
-// configured hosts would mirror someone's file to the wrong organization, which
+// configured hosts would upload someone's file to the wrong organization, which
 // is not a failure you want to discover from the recipient.
 //
-// There is no writer yet: `auth login` is the CLI's job. Create the file by hand
-// — see the README.
+// Every resolution says WHICH step chose it (`source`) and where the token came
+// from, because `cdn auth status` has to explain the answer rather than assert
+// it — "why is it uploading there" is the question this file exists to answer.
 
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/** A host and the bearer that writes to it. Everything else is derived. */
+/** Everything a client needs in order to write: a host and a bearer. Deliberately
+    the narrow type — `upload()` should be callable with a pair someone typed, not
+    only with something this module resolved. */
 export type Target = { host: string; token: string };
+
+/** A resolved target, plus the audit trail `cdn auth status` prints. */
+export type Resolved = Target & {
+  /** `env` = CDN_HOST + CDN_TOKEN, `CDN_HOST` = the named file, `default` = the sole file. */
+  source: "env" | "CDN_HOST" | "default";
+  tokenFrom: "env" | "file";
+  /** The host file involved, absent when both values came from the environment. */
+  file?: string;
+};
 
 /** Resolution never throws: the hooks that call it must never fail the tool they
     ran after, so a missing config is a value they can turn into one line of
     transcript. The error text always names the path to create. */
-export type Resolution = { ok: true; target: Target } | { ok: false; error: string };
+export type Resolution = { ok: true; target: Resolved } | { ok: false; error: string };
 
 type Env = Record<string, string | undefined>;
 
 export const hostsDir = (env: Env = process.env): string =>
   join(env.XDG_CONFIG_HOME || join(env.HOME || homedir(), ".config"), "cdn", "hosts");
+
+/** A host file on disk, with the one property worth checking: a token readable by
+    anyone else is a token to rotate. 0600 is what `auth login` writes. */
+export type HostFile = { host: string; file: string; mode: number; secure: boolean };
+
+export const listHosts = async (env: Env = process.env): Promise<HostFile[]> => {
+  const dir = hostsDir(env);
+  const names = await readdir(dir).catch(() => [] as string[]);
+  return Promise.all(
+    names
+      .filter((n) => n.endsWith(".env"))
+      .sort()
+      .map(async (name) => {
+        const file = join(dir, name);
+        const mode = ((await stat(file).catch(() => null))?.mode ?? 0) & 0o777;
+        // Anything readable by group or other. The owner bits are their business.
+        return { host: stem(name), file, mode, secure: (mode & 0o077) === 0 };
+      })
+  );
+};
 
 /** The dotenv subset every reader of these files can agree on: `KEY=value`, one
     per line, `#` comments, optional single or double quotes, an optional `export`
@@ -71,7 +103,12 @@ export async function resolveTarget(env: Env = process.env): Promise<Resolution>
   // Both in the environment ⇒ the file is never consulted, so a CI job, a
   // container, or a one-off `CDN_HOST=… CDN_TOKEN=… ` invocation needs nothing
   // on disk.
-  if (envHost && envToken) return { ok: true, target: { host: envHost, token: envToken } };
+  if (envHost && envToken) {
+    return {
+      ok: true,
+      target: { host: envHost, token: envToken, source: "env", tokenFrom: "env" },
+    };
+  }
 
   let host = envHost;
   if (!host) {
@@ -110,5 +147,14 @@ export async function resolveTarget(env: Env = process.env): Promise<Resolution>
   // you reach for to test a second credential without editing config.
   const token = envToken ?? parseDotenv(text).CDN_TOKEN?.trim();
   if (!token) return { ok: false, error: `${file} has no CDN_TOKEN=… line` };
-  return { ok: true, target: { host, token } };
+  return {
+    ok: true,
+    target: {
+      host,
+      token,
+      source: envHost ? "CDN_HOST" : "default",
+      tokenFrom: envToken ? "env" : "file",
+      file,
+    },
+  };
 }

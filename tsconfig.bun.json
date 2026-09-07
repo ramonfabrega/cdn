@@ -1,0 +1,28 @@
+{
+  // The Bun half of the repo: `client/`, `cli/`, `hooks/`, and the one test under
+  // `macos/`. They cannot share the root tsconfig, which loads
+  // worker-configuration.d.ts and the vitest-pool-workers types — in workerd
+  // `Bun` is undefined and `R2Bucket` is global, and here it is the other way
+  // round. Two runtimes, two configs.
+  //
+  // Each directory has a three-line tsconfig.json extending this one, because an
+  // editor resolves the nearest config by directory and an inherited `include`
+  // resolves relative to the file it came from. Nothing typechecks in CI (Bun
+  // strips types without checking them) — these exist so an editor is right about
+  // which globals are in scope.
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "allowJs": false,
+    "types": ["@types/bun"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true
+  }
+}

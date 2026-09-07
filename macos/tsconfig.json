@@ -1,7 +1,4 @@
 {
-  // The quickshare test runs in Bun, like the hooks — same compiler options, and
-  // `include` has to be re-declared because an inherited one resolves relative to
-  // the config it came from. Editor ergonomics only; nothing typechecks in CI.
-  "extends": "../hooks/tsconfig.json",
+  "extends": "../tsconfig.bun.json",
   "include": ["**/*.ts"]
 }

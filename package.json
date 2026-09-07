@@ -7,11 +7,11 @@
     "deploy": "wrangler deploy",
     "preview": "wrangler versions upload",
     "types": "wrangler types",
-    "test": "vitest run && bun test hooks/ macos/",
+    "test": "vitest run && bun test client/ hooks/ cli/ macos/",
     "test:worker": "vitest run",
-    "test:bun": "bun test hooks/ macos/",
+    "test:bun": "bun test client/ hooks/ cli/ macos/",
     "lint": "biome check .",
-    "check": "bun install --frozen-lockfile && biome check . && vitest run && bun test hooks/ macos/"
+    "check": "bun install --frozen-lockfile && biome check . && vitest run && bun test client/ hooks/ cli/ macos/"
   },
   "cloudflare": {
     "bindings": {
@@ -34,7 +34,9 @@
   },
   "dependencies": {
     "hono": "^4.6.0",
-    "takumi-js": "^2.1.1"
+    "incur": "^0.5.1",
+    "takumi-js": "^2.1.1",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.16",
