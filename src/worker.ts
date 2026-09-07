@@ -17,6 +17,7 @@ import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import { stream } from "hono/streaming";
 import { ImageResponse } from "takumi-js/response";
 
+import { type AccessConfig, verifyAccessJwt } from "./access.ts";
 import { CARD_FONTS, folderCard } from "./card.ts";
 import { folderPage } from "./folder.tsx";
 import { mimeFor, publicUrl } from "./lib/cdn.ts";
@@ -147,6 +148,19 @@ app.use("*", async (c, next) => {
   if (!c.res.headers.has("cache-control")) c.header("Cache-Control", "no-store");
 });
 
+// Cloudflare Access, when an instance has it. Both vars set ⇒ a verified
+// assertion is a way in; absent ⇒ the password is the only one, which is the
+// right default for a solo install that shouldn't need Zero Trust.
+//
+// The header is checked, never trusted: Access guards the front door, so a
+// request that reaches the Worker by any other route (a preview URL outside the
+// application, a direct workers.dev hit) can set whatever header it likes.
+const accessConfig = (env: Env): AccessConfig | undefined => {
+  const team = optionalVar(env, "CDN_ACCESS_TEAM");
+  const aud = optionalVar(env, "CDN_ACCESS_AUD");
+  return team && aud ? { team, aud } : undefined;
+};
+
 // ── auth gate — protects only the explorer (/ and /api/*). Object serving (the
 // CDN) and the auth pages stay public. ───────────────────────────────────────
 app.use("*", async (c, next) => {
@@ -154,8 +168,24 @@ app.use("*", async (c, next) => {
   if (!isAdminPath(path)) return next();
   // Two routes take the bearer: the write itself, and the no-op that exists so a
   // client can find out whether its bearer works without writing. Everything
-  // else — the explorer + destructive APIs — requires the signed session cookie.
+  // else — the explorer + destructive APIs — requires a session.
   if (BEARER_PATHS.has(path) && bearerOk(c.env, c.req.header("authorization"))) return next();
+
+  // An Access assertion is a session. A team instance then runs with no shared
+  // secret at all: identity is per-person, revocable and audited by whatever IdP
+  // the organization already has, instead of one password everyone knows and
+  // nobody rotates.
+  const access = accessConfig(c.env);
+  const assertion = c.req.header("cf-access-jwt-assertion");
+  if (access && assertion) {
+    const verified = await verifyAccessJwt(access, assertion);
+    if (verified.ok) return next();
+    // Worth a line: a failing assertion on a host that HAS Access in front of it
+    // means something is misconfigured (a stale AUD after re-creating the app is
+    // the usual culprit), and the fall-through to the password hides it.
+    console.error(`access assertion rejected: ${verified.reason}`);
+  }
+
   const ok = await getSignedCookie(c, sessionSecret(c.env), COOKIE);
   if (ok !== "ok") {
     if (path.startsWith("/api/")) return c.json({ error: "unauthorized" }, 401);

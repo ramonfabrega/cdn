@@ -4,6 +4,8 @@
 import { env, SELF } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+import { forgetAccessKeys } from "./access.ts";
+
 const BASE = "https://cdn.test";
 
 describe("object serving (the CDN)", () => {
@@ -313,6 +315,79 @@ describe("auth gate", () => {
       method: "POST",
       headers: { authorization: "Bearer test-upload-token", "content-type": "application/json" },
       body: JSON.stringify({ key: "whatever.txt" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  // A team instance runs with no shared secret: Access authenticates the person
+  // before the request arrives, and a verified assertion IS the session.
+  test("a verified Access assertion opens the explorer without the password", async () => {
+    forgetAccessKeys();
+    const pair = await crypto.subtle.generateKey(
+      {
+        name: "RSASSA-PKCS1-v1_5",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA-256",
+      },
+      true,
+      ["sign", "verify"]
+    );
+    const jwk = { ...(await crypto.subtle.exportKey("jwk", pair.publicKey)), kid: "k1" };
+    const b64 = (b: ArrayBuffer | Uint8Array) => {
+      const v = b instanceof Uint8Array ? b : new Uint8Array(b);
+      let s = "";
+      for (const c of v) s += String.fromCharCode(c);
+      return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    };
+    const seg = (o: unknown) => b64(new TextEncoder().encode(JSON.stringify(o)));
+    const head = seg({ alg: "RS256", kid: "k1", typ: "JWT" });
+    const body = seg({
+      iss: "https://acme.cloudflareaccess.com",
+      aud: ["aud-tag"],
+      exp: Math.floor(Date.now() / 1000) + 600,
+      email: "someone@example.com",
+    });
+    const sig = await crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      pair.privateKey,
+      new TextEncoder().encode(`${head}.${body}`)
+    );
+    const token = `${head}.${body}.${b64(sig)}`;
+
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.endsWith("/cdn-cgi/access/certs")) return Response.json({ keys: [jwk] });
+      return real(input, init);
+    });
+    Reflect.set(env, "CDN_ACCESS_TEAM", "acme");
+    Reflect.set(env, "CDN_ACCESS_AUD", "aud-tag");
+    try {
+      const ok = await SELF.fetch(`${BASE}/api/tree`, {
+        headers: { "cf-access-jwt-assertion": token },
+      });
+      expect(ok.status).toBe(200);
+
+      // And the header alone proves nothing — Access guards the front door, so a
+      // request arriving any other way can set whatever header it likes.
+      const forged = await SELF.fetch(`${BASE}/api/tree`, {
+        headers: { "cf-access-jwt-assertion": `${head}.${body}.${b64(new Uint8Array(256))}` },
+      });
+      expect(forged.status).toBe(401);
+    } finally {
+      vi.unstubAllGlobals();
+      Reflect.deleteProperty(env, "CDN_ACCESS_TEAM");
+      Reflect.deleteProperty(env, "CDN_ACCESS_AUD");
+      forgetAccessKeys();
+    }
+  });
+
+  // The template's default: no Access configured, so the assertion is ignored
+  // entirely rather than half-trusted.
+  test("with no Access configured the assertion is ignored and the password rules", async () => {
+    const res = await SELF.fetch(`${BASE}/api/tree`, {
+      headers: { "cf-access-jwt-assertion": "anything at all" },
     });
     expect(res.status).toBe(401);
   });
