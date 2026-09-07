@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Source of truth for the "Share to CDN" Shortcut. A .shortcut file is a *signed
+  binary* plist — opaque to git — so what lives here is the XML the signer eats;
+  `./macos/install.sh` turns it into an importable file.
+
+  The Shortcut is deliberately one action: run `macos/quickshare` with the
+  Shortcut's input as arguments. All behavior is in that script, in git. This file
+  only decides *when* it runs, never *what* it does — so the Shortcut never needs
+  re-importing for a behavior change.
+
+  One Shortcut covers both surfaces because `quickshare` reads its own input:
+    hotkey / no selection -> no arguments -> interactive capture, link to clipboard
+    Finder right-click    -> file paths   -> upload those, link to clipboard
+
+  THE ONE LINE TO EDIT: the Script value at the bottom, if you cloned this repo
+  somewhere other than ~/code/cdn. It is the only path in here, and changing it is
+  the only reason to re-import.
+-->
+<plist version="1.0">
+<dict>
+  <key>WFWorkflowClientVersion</key><string>1200</string>
+  <key>WFWorkflowMinimumClientVersion</key><integer>900</integer>
+  <key>WFWorkflowMinimumClientVersionString</key><string>900</string>
+
+  <!-- Arbitrary but stable: a paperclip-ish glyph on a blue field. -->
+  <key>WFWorkflowIcon</key>
+  <dict>
+    <key>WFWorkflowIconGlyphNumber</key><integer>59511</integer>
+    <key>WFWorkflowIconStartColor</key><integer>4282601983</integer>
+  </dict>
+
+  <key>WFWorkflowImportQuestions</key><array/>
+
+  <!-- Accept files/images/media from Finder and the share sheet; anything else is
+       ignored by the script anyway (it just captures instead). -->
+  <key>WFWorkflowInputContentItemClasses</key>
+  <array>
+    <string>WFGenericFileContentItem</string>
+    <string>WFImageContentItem</string>
+    <string>WFAVAssetContentItem</string>
+    <string>WFPDFContentItem</string>
+    <string>WFFolderContentItem</string>
+  </array>
+  <key>WFWorkflowTypes</key><array/>
+  <key>WFWorkflowHasShortcutInputVariables</key><true/>
+  <key>WFWorkflowHasOutputFallback</key><false/>
+
+  <key>WFWorkflowActions</key>
+  <array>
+    <dict>
+      <key>WFWorkflowActionIdentifier</key><string>is.workflow.actions.runshellscript</string>
+      <key>WFWorkflowActionParameters</key>
+      <dict>
+        <!-- "Shortcut Input" — the files Finder/the share sheet handed us, or
+             nothing at all when fired from a bare hotkey. This serialization is the
+             one hand-written bit of Shortcuts internals here (Apple documents none
+             of it); confirmed working against Finder multi-select, so don't "fix" it. -->
+        <key>Input</key>
+        <dict>
+          <key>WFSerializationType</key><string>WFTextTokenAttachment</string>
+          <key>Value</key>
+          <dict>
+            <key>Type</key><string>ExtensionInput</string>
+          </dict>
+        </dict>
+        <key>InputMode</key><string>as arguments</string>
+        <key>Shell</key><string>/bin/zsh</string>
+        <!-- "$@" not "$1": a Finder multi-selection arrives as several arguments,
+             and quickshare turns them into one folder. $HOME-relative so the plist
+             carries nobody's username; edit the rest of the path to match your
+             clone. The script appends the system directories to its own PATH, so a
+             bare Shortcuts environment is fine. -->
+        <key>Script</key><string>"$HOME/code/cdn/macos/quickshare" "$@"</string>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

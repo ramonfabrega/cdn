@@ -46,7 +46,9 @@ cards and all. See [`docs/DESIGN.md`](docs/DESIGN.md) for that measurement.
 Writers are anything that can `POST` a file with a bearer token: a shell one-liner, a CLI, an
 editor hook, a macOS Shortcut. They share **no code** with the Worker — send the bytes, get the URL
 back — so the classification and key rules stay server-side and there is exactly one write path to
-secure. Two writers ship in this repo, under `hooks/` — see below.
+secure. Three writers ship in this repo: two Claude Code hooks under `hooks/` (below) and a macOS
+hotkey / Finder action under [`macos/`](macos/README.md) — bash and curl, so the Mac path needs
+nothing installed at all.
 
 ## Claude Code hooks
 
@@ -147,8 +149,8 @@ are reached over http, everything else over https.
 ## Files
 
 Source lives under `src/` (Worker app + pure lib + tests); `public/` holds the static UI; `hooks/`
-holds the optional Claude Code hooks; the package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit
-at the repo root.
+holds the optional Claude Code hooks; `macos/` the optional Shortcut; the package configs
+(`wrangler.jsonc`, `tsconfig.json`, …) sit at the repo root.
 
 Two runtimes, therefore two test runners: `src/` runs in **workerd** (vitest, Miniflare R2) and
 `hooks/` runs in **Bun** (`bun:test`). `bun run check` runs both, so CI is still one command.
@@ -231,6 +233,10 @@ Two runtimes, therefore two test runners: `src/` runs in **workerd** (vitest, Mi
 - **`hooks/mirror.test.ts`** — spawns the real scripts and speaks the real contract (JSON in, one
   JSON line out, exit 0) against a `Bun.serve` stub. Importing a function out of a hook would pass
   while the script itself failed to parse stdin, which is the failure that actually happens.
+- **`macos/`** — the human path: `quickshare` (bash + curl, no runtime — the same hosts file, one
+  URL out, always), the Shortcut that calls it, its signer, and
+  [`macos/README.md`](macos/README.md) for the GUI settings a fresh import needs. Optional and
+  macOS-only; nothing else in the repo depends on it.
 - **`public/`** — vanilla, event-delegated, zero-build UI: `index.html` + `styles.css` + `app.js`
   (separate on disk; the Worker folds them into one response). Left **folder rail** (scope by prefix)
   · flat sortable/searchable list · ⌘K search · `⋯`/right-click menus · centered modals · animated delete
