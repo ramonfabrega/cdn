@@ -22,16 +22,16 @@
         "description": "The R2 bucket this CDN serves. Every path on the Worker streams an object out of it, and `POST /api/upload` is the only way in."
       },
       "CDN_PASSWORD": {
-        "description": "Password for the file explorer at `/`. Object URLs stay public \u2014 this gates the browse/upload/delete UI only."
-      },
-      "CDN_SESSION_SECRET": {
-        "description": "Signs the explorer's session cookie. Generate one with `openssl rand -hex 32`. Changing it signs everyone out."
+        "description": "**The only value you need.** Password for the file explorer at `/` \u2014 object URLs stay public, this gates the browse/upload/delete UI. Let your password manager generate it: it also signs your session cookie unless you set `CDN_SESSION_SECRET` below."
       },
       "CDN_UPLOAD_TOKEN": {
-        "description": "Bearer token for `POST /api/upload` \u2014 how scripts, CLIs and hooks write. Generate one with `openssl rand -hex 32`; keep it separate from your password."
+        "description": "**Optional, leave blank.** Bearer token for `POST /api/upload` \u2014 how scripts, CLIs and hooks write. Blank means no machine write path at all (every bearer is rejected); you can still upload by dragging onto the explorer. `cdn setup` generates one when you want it."
+      },
+      "CDN_SESSION_SECRET": {
+        "description": "**Optional, leave blank.** Signs the explorer's session cookie. Blank derives the key from your password, which is why this deploy only asks for one thing. Set it (`openssl rand -hex 32`) to rotate sessions independently of the password."
       },
       "CDN_PURGE_TOKEN": {
-        "description": "**Optional, leave blank.** A [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens) scoped to *Zone \u2192 Cache Purge*, so an overwritten file goes stale on every edge POP at once. Only useful once you have added a custom domain \u2014 see the README."
+        "description": "**Optional, leave blank.** A [Cloudflare API token](https://dash.cloudflare.com/profile/api-tokens) scoped to *Zone \u2192 Cache Purge*, so an overwritten file goes stale on every edge POP at once. Only useful once you have added a custom domain \u2014 `cdn setup` mints it for you."
       }
     }
   },

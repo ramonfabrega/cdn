@@ -22,7 +22,7 @@ import { CARD_FONTS, folderCard } from "./card.ts";
 import { folderPage } from "./folder.tsx";
 import { mimeFor, publicUrl } from "./lib/cdn.ts";
 import { brand, escapeHtml } from "./lib/ui.ts";
-import { loginPage } from "./login.tsx";
+import { loginPage, notConfiguredPage } from "./login.tsx";
 import {
   createFolder,
   listFolder,
@@ -120,11 +120,32 @@ const purgeEdge = async (env: Env, origin: string, keys: string[]) => {
 // Only the explorer itself is gated; object paths (the CDN) + auth pages are public.
 const isAdminPath = (path: string) => path === "/" || path.startsWith("/api/");
 
-// Secrets live on env (per-request), not a module global. Auth fails CLOSED:
-// with no CDN_PASSWORD configured, every login is rejected — never a baked-in
-// default. Local dev supplies CDN_PASSWORD + CDN_SESSION_SECRET via .dev.vars.
-const sessionSecret = (env: Env) =>
-  env.CDN_SESSION_SECRET || `${env.CDN_PASSWORD ?? ""}::cdn-explorer-session`;
+// Secrets live on env (per-request), not a module global. Local dev supplies
+// CDN_PASSWORD via .dev.vars.
+//
+/**
+ * The key that signs the session cookie — or `undefined` when this instance has
+ * nothing to sign with, which callers must treat as "no session can be valid"
+ * rather than as a default.
+ *
+ * `CDN_SESSION_SECRET` is OPTIONAL by design. A one-click deploy should need
+ * exactly one human-supplied value, and that value is the password: a form field
+ * a password manager will fill with something strong. Asking a stranger for 32
+ * bytes of hex before their CDN works is how templates end up deployed with the
+ * placeholder still in the box. So when it is absent the key is derived from the
+ * password, and setting it explicitly is what decouples the two — rotate
+ * sessions without changing your password, or vice versa.
+ *
+ * What it must NEVER do is fall back to a CONSTANT. It used to: with neither
+ * value set, this returned `"::cdn-explorer-session"` — a string published in a
+ * public template, so anyone could forge `cdn_session=ok` and walk past a login
+ * page that was correctly refusing them. Auth failed closed on the password path
+ * and wide open on the cookie path. Absent means absent.
+ */
+const sessionSecret = (env: Env): string | undefined => {
+  if (env.CDN_SESSION_SECRET) return env.CDN_SESSION_SECRET;
+  return env.CDN_PASSWORD ? `${env.CDN_PASSWORD}::cdn-explorer-session` : undefined;
+};
 
 // The `share` CLI can't run the cookie login flow, so uploads accept a bearer
 // token instead. Scoped to POST /api/upload only (see the gate) and fails CLOSED
@@ -204,7 +225,10 @@ app.use("*", async (c, next) => {
     }
   }
 
-  const ok = await getSignedCookie(c, sessionSecret(c.env), COOKIE);
+  // No secret ⇒ no cookie can be valid. Not "reject this cookie" — there is no
+  // key to check it against, and inventing one is the bug this replaced.
+  const secret = sessionSecret(c.env);
+  const ok = secret === undefined ? undefined : await getSignedCookie(c, secret, COOKIE);
   if (ok !== "ok") {
     if (path.startsWith("/api/")) return c.json({ error: "unauthorized" }, 401);
     return c.redirect("/login");
@@ -239,13 +263,21 @@ const CONTRACT = 1;
 app.get("/api/auth", (c) => c.json({ contract: CONTRACT }));
 
 // ── login / logout ──────────────────────────────────────────────────────────
-app.get("/login", (c) => c.html(loginPage(new URL(c.req.url).host)));
+// A fresh deploy with no password is the one genuinely broken state, and it says
+// so. The alternative — a password box that answers "Wrong password." to every
+// possible password — is a lie about what is wrong. 503, because the explorer is
+// not misconfigured so much as not configured yet.
+app.get("/login", (c) => {
+  const host = new URL(c.req.url).host;
+  return c.env.CDN_PASSWORD ? c.html(loginPage(host)) : c.html(notConfiguredPage(host), 503);
+});
 
 app.post("/login", async (c) => {
   const body = await c.req.parseBody();
   const pw = c.env.CDN_PASSWORD;
-  if (pw && body.password === pw) {
-    await setSignedCookie(c, COOKIE, "ok", sessionSecret(c.env), {
+  const secret = sessionSecret(c.env);
+  if (pw && secret && body.password === pw) {
+    await setSignedCookie(c, COOKIE, "ok", secret, {
       httpOnly: true,
       sameSite: "Lax",
       path: "/",

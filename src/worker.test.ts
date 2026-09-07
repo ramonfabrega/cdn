@@ -593,3 +593,118 @@ describe("zone purge on write", () => {
     expect(await (await env.BUCKET.get("templated.txt"))?.text()).toBe("t");
   });
 });
+
+// ── an unconfigured instance ────────────────────────────────────────────────
+// The state a one-click deploy is in before anyone sets a password. It used to
+// be the most open state this Worker had: with neither CDN_PASSWORD nor
+// CDN_SESSION_SECRET set, the cookie key collapsed to the constant
+// "::cdn-explorer-session" — printed in a public template — so a forged cookie
+// walked past a login page that was correctly refusing every password.
+describe("with nothing configured at all", () => {
+  const PUBLISHED_CONSTANT = "::cdn-explorer-session";
+
+  /** Hono's signed-cookie format, from hono/utils/cookie: `value.base64(hmac)`. */
+  const forge = async (value: string, secret: string) => {
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value));
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(mac)));
+    return `${value}.${b64}`;
+  };
+
+  const unconfigured = async (run: () => Promise<void>) => {
+    const password = env.CDN_PASSWORD;
+    Reflect.deleteProperty(env, "CDN_PASSWORD");
+    Reflect.deleteProperty(env, "CDN_SESSION_SECRET");
+    try {
+      await run();
+    } finally {
+      Reflect.set(env, "CDN_PASSWORD", password);
+    }
+  };
+
+  // POSITIVE CONTROL, and the test that makes the two below worth having: prove
+  // this forger produces cookies the Worker actually accepts when the key is
+  // right. Without it, a rejection could just mean the forgery was malformed.
+  test("the forger is real — a correctly-keyed cookie IS accepted", async () => {
+    Reflect.set(env, "CDN_SESSION_SECRET", "a-known-key");
+    try {
+      const cookie = await forge("ok", "a-known-key");
+      const res = await SELF.fetch(`${BASE}/api/tree`, {
+        headers: { cookie: `cdn_session=${encodeURIComponent(cookie)}` },
+      });
+      expect(res.status).toBe(200);
+    } finally {
+      Reflect.deleteProperty(env, "CDN_SESSION_SECRET");
+    }
+  });
+
+  test("a cookie forged with the published constant does not get in", async () => {
+    await unconfigured(async () => {
+      const cookie = await forge("ok", PUBLISHED_CONSTANT);
+      const res = await SELF.fetch(`${BASE}/api/tree`, {
+        headers: { cookie: `cdn_session=${encodeURIComponent(cookie)}` },
+      });
+      expect(res.status).toBe(401);
+    });
+  });
+
+  test("nor does one forged with the empty-password derivation", async () => {
+    await unconfigured(async () => {
+      const cookie = await forge("ok", `::cdn-explorer-session`);
+      const res = await SELF.fetch(`${BASE}/`, {
+        redirect: "manual",
+        headers: { cookie: `cdn_session=${encodeURIComponent(cookie)}` },
+      });
+      // Redirected to /login rather than served the explorer.
+      expect(res.status).toBe(302);
+    });
+  });
+
+  test("/login says it is not configured instead of refusing every password", async () => {
+    await unconfigured(async () => {
+      const res = await SELF.fetch(`${BASE}/login`);
+      // 503: not misconfigured so much as not configured yet.
+      expect(res.status).toBe(503);
+      const html = await res.text();
+      expect(html).toContain("no explorer password yet");
+      expect(html).toContain("wrangler secret put CDN_PASSWORD");
+      // And it does not pretend a password would help.
+      expect(html).not.toContain('type="password"');
+    });
+  });
+
+  test("object serving keeps working — the CDN half needs no secret", async () => {
+    await env.BUCKET.put("unconfigured.txt", "still served");
+    await unconfigured(async () => {
+      const res = await SELF.fetch(`${BASE}/unconfigured.txt`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("still served");
+    });
+  });
+});
+
+// The other half of the same decision: a password but no session secret is the
+// SUPPORTED one-field deploy, not a degraded one. It has to work end to end.
+describe("with only a password configured", () => {
+  test("login works and the derived key signs a usable session", async () => {
+    Reflect.deleteProperty(env, "CDN_SESSION_SECRET");
+    const res = await SELF.fetch(`${BASE}/login`, {
+      method: "POST",
+      redirect: "manual",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ password: "test-password" }),
+    });
+    expect(res.status).toBe(302);
+    const cookie = res.headers.get("set-cookie")?.split(";")[0] ?? "";
+    expect(cookie).toMatch(/^cdn_session=/);
+
+    const tree = await SELF.fetch(`${BASE}/api/tree`, { headers: { cookie } });
+    expect(tree.status).toBe(200);
+  });
+});

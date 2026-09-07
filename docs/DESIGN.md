@@ -4,6 +4,85 @@ Why things are the way they are. `CLAUDE.md` carries what every session needs;
 this file carries the decisions that were arguable, with the evidence that
 settled them. Newest first.
 
+## One field, and the two ways that went wrong (2026-09-07)
+
+Found by pressing the button. The first real run of this template through the
+Deploy to Cloudflare flow, done exactly as a stranger would, and the setup
+dialog offered `change-me` in all four secret boxes.
+
+**Cloudflare prefills the deploy dialog from `.dev.vars.example`'s VALUES.** The
+docs say it in one line — "Add secrets to a `.dev.vars.example` or `.env.example`
+file: `COOKIE_SIGNING_KEY=my-secret # comment`" — and the consequence is that a
+placeholder in that file is a *default* in everybody's deploy dialog. This repo
+shipped `change-me`. `CDN_PASSWORD=change-me` is embarrassing;
+`CDN_SESSION_SECRET=change-me` is a compromise, because the session cookie is
+signed with it and the value is printed in a public repository. Anyone could
+forge `cdn_session=ok` and be inside the explorer — delete, move and rename
+included — without ever seeing the login page.
+
+**Checking that turned up the worse one, which had nothing to do with
+`change-me`.** `sessionSecret` used to read:
+
+```ts
+env.CDN_SESSION_SECRET || `${env.CDN_PASSWORD ?? ""}::cdn-explorer-session`
+```
+
+With both unset it resolves to `"::cdn-explorer-session"` — again a constant in a
+public repo. So the obvious fix, "ship the placeholders empty", would have left
+a deployment that is *more* forgeable, not less. The comment above it claimed
+auth failed closed; it did, on the password path, while the cookie path stood
+open. **A fallback that cannot fail is not a fallback.** It now returns
+`undefined`, and the gate treats that as "no cookie can be valid" rather than
+inventing a key to check against. The regression test forges a cookie with the
+published constant and expects a 401 — and, because a malformed forgery would
+also produce a 401 and prove nothing, a positive control first proves the forger
+makes cookies the Worker really does accept when the key is right.
+
+**Then the interesting part: empty is safe but not good enough.** Empty fields
+mean a stranger opens a terminal, runs `openssl rand -hex 32` twice, comes back
+and pastes. As the author put it while looking at the dialog: *"if people have to
+go to terminal to openssl and then back to browser they'll prolly leave
+change-me's there."* That is right, and it is the actual defect behind the
+`change-me` one — the flow asked for two values no human should ever be asked to
+produce.
+
+Cloudflare offers no help: `package.json` `cloudflare.bindings` supports
+`description` and nothing else, with no way to mark a secret generated, required
+or defaulted. So the only lever is **how many high-entropy values a human must
+produce before the thing works**, and the answer should be zero.
+
+- `CDN_PASSWORD` is required, and it is the one field a human is *good* at: a
+  password input, which is exactly where a password manager offers to generate
+  something strong.
+- `CDN_SESSION_SECRET` is optional, and when absent the cookie key is derived
+  from the password. That is the same derivation as before — its bug was the
+  constant, not the idea.
+- `CDN_UPLOAD_TOKEN` is optional, and absent is the *better* default: no machine
+  write path at all, rather than one guarded by a value someone skimmed past. You
+  can still upload by dragging onto the explorer, and `cdn setup` provisions the
+  token when you want the CLI, the hooks or the Shortcut.
+- `CDN_PURGE_TOKEN` was already minted by `cdn setup`.
+
+So the first run is: type a password, deploy, log in. The trade-off is stated
+rather than hidden — with no `CDN_SESSION_SECRET`, the cookie key is only as
+strong as the password. That is not much of a concession: anyone able to
+brute-force the key offline could hammer the login endpoint instead, and a
+password field is where strong passwords come from.
+
+**Simpler must not mean looser, so the looseness became loud.** The one state
+that is genuinely broken — no password at all — now says so: `/login` renders a
+"not configured" page with the one command that fixes it, and returns 503,
+because the explorer is not misconfigured so much as not configured yet. The
+alternative was a password box answering "Wrong password." to every possible
+password, which is a lie about what is wrong and the kind of lie someone debugs
+for twenty minutes.
+
+Object serving deliberately keeps working in that state, and has its own test.
+The two halves of this Worker have different failure modes on purpose: the
+public CDN stays up (a fresh bucket is empty, and a secret momentarily lost
+should not take everyone's links down), while the authenticated surface closes.
+Fail closed on the door, not on the road.
+
 ## The refusal that ended in a measurement (2026-09-07)
 
 `cdn setup` sets Browser Cache TTL now. The interesting part is not the write —
