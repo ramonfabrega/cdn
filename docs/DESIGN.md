@@ -49,6 +49,50 @@ world-readable token, say — the step fails loudly and says the secret is only
 shown once, because at that point the value is genuinely gone and the fix is to
 delete the secret and re-run rather than to hunt for it.
 
+## master is production, and previews are the staging (2026-09-07)
+
+This was true before it was decided — the dotfiles copy did it, and the template
+inherited it — so it is written down now to stop it being settled by inertia.
+
+**The shape:** `master` deploys to production. A branch gets a Workers Builds
+preview URL. Per-PR preview *is* the staging environment; there is no third
+place a change waits.
+
+**Why it fits this project in particular.** The thing you compare a change
+against is the live CDN, and a preview serves the *same R2 bucket* — so master
+and a preview can be opened side by side on the same objects, and the only
+difference between the two windows is the code. A separately-provisioned staging
+environment would have an empty bucket, which for an explorer is not a weaker
+test but a meaningless one: the whole surface is a rendering of what is in the
+bucket.
+
+**What that costs, and it is the same property.** The shared bindings that make
+the comparison honest also mean a preview can *write*. Uploading, deleting,
+moving or renaming from a preview mutates the live bucket, because Workers has
+no per-environment binding overrides. Reading from a preview is free; acting in
+one is production. The README's Previews section has always said so; it is worth
+repeating here because this decision is what makes people spend time in previews.
+
+**Consequence for a fork:** none, except that the button's default matches. A
+fork that wants isolation gets it by pointing `bucket_name` at a different
+bucket, which is one line — and gets an explorer full of nothing, which is the
+trade it is choosing.
+
+**And the press found the gap in this loop.** The README described the Workers
+Builds settings as "what the button sets up". It was describing the *live
+instance*, which was configured by hand. A real press leaves **Build command
+empty** and sets **Deploy command to `bun run deploy`** — so a fresh fork deploys
+every push without linting or testing it. The Worker works; the CI half of
+"branch → PR → merge" simply is not there until someone turns it on.
+
+`cdn setup` cannot turn it on either, and the reason is specific rather than
+lazy: the Workers Builds API requires a **user-scoped** API token and explicitly
+rejects account-scoped ones, while setup's token is account-scoped by design —
+that being the whole point of a credential you can delete afterwards without
+touching your user. So it stays a documented two-field dashboard step, and the
+table now says what the button actually does next to what you should change it
+to, which is what it should have said all along.
+
 ## The press, all the way through (2026-09-07)
 
 The template deployed as a stranger would deploy it — button, dialog, build,

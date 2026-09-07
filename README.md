@@ -478,7 +478,14 @@ knows about `BUCKET` and `ASSETS` and nothing else. For real R2 data locally use
   editor right about which globals are in scope.
 
 To **ship**: branch → PR (CI lints + tests, and comments a preview URL you can click) → merge to
-your production branch (CI deploys). No manual `deploy` step in the normal loop — see below.
+`master`, which deploys. No manual `deploy` step in the normal loop — see below.
+
+**`master` is production.** Not a default that nobody chose: it is the shape this repo wants,
+because the thing you compare a change against is the live CDN itself. A branch gets a preview URL
+serving the *same bucket*, so master and preview can be opened side by side and the only difference
+between them is the code. Per-PR previews are the staging environment; there is no third place for
+a change to sit. See [`docs/DESIGN.md`](docs/DESIGN.md) for what that costs as well as what it
+buys.
 
 ## Deploy
 
@@ -490,18 +497,27 @@ works for an out-of-band push.
 ### CI (dashboard: Worker → Settings → Builds)
 
 The whole config lives in the Cloudflare dashboard — Workers Builds has no in-repo config file, so
-what the button sets up is recorded here, both to check it and to rebuild it by hand:
+the settings are recorded here, both to check them and to rebuild them by hand.
 
-| Setting | Value |
-| --- | --- |
-| Root directory (“Path”) | `/` (dashboard-relative; a subdirectory would be `/cdn`) |
-| Build command | `bun run check` |
-| Deploy command | `npx wrangler deploy` |
-| Non-production branch deploy command | `npx wrangler versions upload` |
-| Production branch | `master` |
-| Builds for non-production branches | enabled |
-| Build watch paths (include) | — (the whole repo; see below) |
-| Build caching | enabled |
+**A fresh press does not give you CI.** Measured on a real deploy, 2026-09-07: the button leaves
+**Build command empty** and sets **Deploy command to `bun run deploy`**. So a brand-new fork
+deploys every push without linting or testing it first. The Worker works — that is what the press
+proved — but the "CI lints + tests" half of the loop above is a thing you turn on, and this is the
+one post-deploy step `cdn setup` cannot do for you: the [Workers Builds
+API](https://developers.cloudflare.com/workers/ci-cd/builds/api-reference/) requires a
+**user-scoped** token and rejects account-scoped ones, and setup's token is account-scoped by
+design. Two fields in the dashboard, once.
+
+| Setting | The button sets | Set it to |
+| --- | --- | --- |
+| Build command | *(empty)* | **`bun run check`** |
+| Deploy command | `bun run deploy` | either; both run `wrangler deploy` |
+| Production branch | `master` | `master` — master is production here |
+| Builds for non-production branches | enabled | enabled |
+| Root directory (“Path”) | `/` | `/` (dashboard-relative; a subdirectory would be `/cdn`) |
+| Non-production branch deploy command | not observed | `npx wrangler versions upload` |
+| Build watch paths (include) | — | — (the whole repo; see below) |
+| Build caching | enabled | enabled |
 
 **Watch paths** matter only if you vendor this Worker into a larger repo. Mind that the two path
 conventions differ, and the dashboard doesn't say so: the **root directory** is dashboard-relative
