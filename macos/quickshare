@@ -1,0 +1,228 @@
+#!/bin/bash
+# Capture-or-upload → CDN → clipboard. The macOS front door, and the one client
+# that needs nothing installed: bash and curl, both already on the machine.
+#
+#   quickshare                 # pick a region/window  -> …/a1b2c3.png
+#   quickshare a.png           # one file              -> …/a1b2c3.png
+#   quickshare a.png b.mov     # several -> one folder -> …/a1b2c3/   (a listing page)
+#   quickshare ./shots         # a folder              -> …/shots/
+#   quickshare a.zip --permanent   # exempt from the 30d sweep
+#
+# It always hands back exactly ONE url, because a clipboard holding several is a trap:
+# any single-line paste target eats the separator and welds them into one dead string.
+#
+# This exists so the GUI triggers (Finder Quick Action, global hotkey) stay dumb:
+# they call this one script and nothing else, so the behavior lives in git rather
+# than inside a Shortcut nobody can diff.
+#
+# There is no CLI and no runtime behind this. `POST /api/upload` is one bearer and a
+# body, so curl is the whole client, and the URL it prints is the one the Worker
+# returned — no client in this repo composes a URL out of a domain string.
+#
+# GUI callers (Shortcuts / Automator) run with a bare PATH — no zshrc, no Homebrew.
+# Every tool used below lives in the system directories, so APPEND them rather than
+# replacing PATH: a bare environment is then fine, and a terminal (or a test) keeps
+# whatever it had in front.
+
+set -uo pipefail
+export PATH="${PATH:+$PATH:}/usr/bin:/bin:/usr/sbin:/sbin"
+
+# Notify via the Notification Center. `-e` (not a script file) so there's nothing
+# else to install; the alert is attributed to whatever app invoked us.
+notify() { osascript -e "display notification \"$2\" with title \"$1\"" >/dev/null 2>&1; }
+
+die() {
+  echo "$1" >&2
+  notify "Share failed" "$1"
+  exit 1
+}
+
+# ── where the token lives ────────────────────────────────────────────────────
+# The same files the Claude Code hooks read (hooks/hosts.ts): one per host at
+# `~/.config/cdn/hosts/<host>.env`, dotenv, mode 0600, and the FILENAME is the
+# host. `source` works because that format is deliberately the dotenv subset bash
+# already understands — which is also exactly why the file has to be yours and
+# 0600: sourcing runs it.
+#
+# Precedence matches hosts.ts, per variable: CDN_HOST and CDN_TOKEN in the
+# environment win; CDN_HOST alone names which file; otherwise the sole *.env is
+# the default. Two of them and no CDN_HOST is a refusal, never a guess — picking
+# one would upload to the wrong organization.
+hosts_dir="${XDG_CONFIG_HOME:-$HOME/.config}/cdn/hosts"
+
+host="${CDN_HOST:-}"
+if [ -z "$host" ]; then
+  files=("$hosts_dir"/*.env) # an unmatched glob comes back literally; -e catches it
+  if [ ! -e "${files[0]:-}" ]; then
+    die "no CDN host configured — create $hosts_dir/<host>.env containing CDN_TOKEN=…, or set CDN_HOST and CDN_TOKEN"
+  fi
+  if [ "${#files[@]}" -gt 1 ]; then
+    names=""
+    for f in "${files[@]}"; do names="${names:+$names, }$(basename "$f" .env)"; done
+    die "${#files[@]} hosts configured in $hosts_dir ($names) — set CDN_HOST to choose one"
+  fi
+  host=$(basename "${files[0]}" .env)
+fi
+
+if [ -z "${CDN_TOKEN:-}" ]; then
+  host_file="$hosts_dir/$host.env"
+  [ -f "$host_file" ] || die "no token for $host — create $host_file containing CDN_TOKEN=…"
+  # shellcheck source=/dev/null
+  . "$host_file"
+  [ -n "${CDN_TOKEN:-}" ] || die "$host_file has no CDN_TOKEN=… line"
+fi
+
+# https everywhere except loopback, which is `wrangler dev` — the one address that
+# legitimately has no certificate. Same rule as the hooks' originFor().
+case "$host" in
+localhost | localhost:* | 127.0.0.1 | 127.0.0.1:* | '[::1]' | '[::1]:'*) origin="http://$host" ;;
+*) origin="https://$host" ;;
+esac
+
+# ── arguments ────────────────────────────────────────────────────────────────
+# Flags are ours now (there is no CLI to pass them through to), so an unknown one
+# is an error rather than something silently dropped on the floor.
+perm=""
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+  --permanent | -p) perm="&permanent=1" ;;
+  -*) die "unknown option: $arg   (usage: quickshare [file…] [--permanent])" ;;
+  *) paths+=("$arg") ;;
+  esac
+done
+
+# No paths → capture one. `-i` is an interactive region/window pick: it blocks until
+# someone drags a crosshair. That's the whole point of the hotkey, and it's also why
+# an agent must never reach this path — there is nobody there, so it would hang until
+# killed. Fail loudly instead of hanging, and point at what does work headless.
+# (A guard in code, not a warning in a doc: a doc can only ask nicely.)
+tmp=""
+if [ "${#paths[@]}" -eq 0 ]; then
+  if [ -n "${CLAUDECODE:-}" ]; then
+    die "quickshare's capture is interactive and would hang. Agents: capture with \`screencapture -x -m <file>\` first, then pass the file — or POST it to /api/upload directly."
+  fi
+  tmp="${TMPDIR:-/tmp}/quickshare-$$.png"
+  screencapture -i -o "$tmp" # -o: no window shadow when picking a window
+  # ESC during the pick still exits 0 but writes nothing — that's a cancel, not a
+  # failure, so leave the clipboard alone and say nothing.
+  [ -s "$tmp" ] || {
+    rm -f "$tmp"
+    exit 0
+  }
+  paths=("$tmp")
+fi
+
+for p in "${paths[@]}"; do [ -e "$p" ] || die "not found: $p"; done
+
+# ── uploading ────────────────────────────────────────────────────────────────
+
+# Percent-encode a key for the query string. Byte-wise under LC_ALL=C in a subshell,
+# so a filename with a space, an accent or an emoji in it survives the trip intact.
+urlencode() (
+  LC_ALL=C
+  local s=$1 out="" i c
+  for ((i = 0; i < ${#s}; i++)); do
+    c=${s:i:1}
+    case $c in
+    [a-zA-Z0-9._~-]) out="$out$c" ;;
+    *) out="$out$(printf '%%%02X' "'$c")" ;;
+    esac
+  done
+  printf '%s' "$out"
+)
+
+# Sets PUT_URL, or dies. Deliberately NOT `url=$(put …)`: `die` inside a command
+# substitution only kills the subshell, so a failed upload would sail on with an
+# empty url and copy nothing to the clipboard.
+PUT_URL=""
+put() {
+  local src=$1 key=$2 res code body
+  res=$(curl -sS -X POST \
+    -H "authorization: Bearer $CDN_TOKEN" \
+    --data-binary @"$src" \
+    -w $'\n%{http_code}' \
+    "$origin/api/upload?key=$(urlencode "$key")$perm" 2>&1)
+  code=${res##*$'\n'}
+  body=${res%$'\n'*}
+  if [ "$code" != 200 ]; then
+    local hint=""
+    [ "$code" = 401 ] && hint=" — check CDN_TOKEN for $host"
+    die "upload failed ($code)$hint: $(printf '%s' "$body" | tail -1 | cut -c1-200)"
+  fi
+  # The url the WORKER minted, from the request it answered — right on a custom
+  # domain, a preview and wrangler dev alike, and it means no client here owns a
+  # domain string.
+  PUT_URL=$(printf '%s' "$body" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')
+  [ -n "$PUT_URL" ] || die "upload of $key returned no url: $(printf '%s' "$body" | cut -c1-200)"
+}
+
+# Every file under a directory, keyed by its path relative to that directory, so the
+# tree survives the upload. Sets FIRST_URL to the first one written.
+FIRST_URL=""
+put_tree() {
+  local dir=${1%/} prefix=$2 f rel n=0
+  # Process substitution, not a pipe: the loop has to run in THIS shell or the
+  # url it captures dies with the subshell.
+  while IFS= read -r f; do
+    rel=${f#"$dir/"}
+    put "$f" "$prefix$rel"
+    n=$((n + 1))
+    [ -n "$FIRST_URL" ] || FIRST_URL=$PUT_URL
+  done < <(find "$dir" -type f ! -name .DS_Store ! -path '*/.git/*' | sort)
+  [ "$n" -gt 0 ] || die "no files in $dir"
+}
+
+# Exactly one URL comes out of here, always. Handing over several links is a trap:
+# the clipboard can only join them with a separator, and any single-line paste target
+# (a browser bar, a chat input) silently eats the newlines and welds them into one
+# unusable string. So a multi-selection becomes a *folder* instead — which the CDN
+# already serves as a public listing page, so one link shows the whole set.
+slug() { uuidgen | tr -dc '[:xdigit:]' | tr 'A-Z' 'a-z' | cut -c1-6; }
+
+# The folder URL, derived from a real one rather than composed: take scheme+host off
+# a URL the Worker itself returned. Keeps the Worker the only owner of the domain.
+folder_url() { printf '%s/%s/' "$(printf '%s' "$1" | cut -d/ -f1-3)" "$2"; }
+
+if [ "${#paths[@]}" -gt 1 ]; then
+  prefix=$(slug)
+  for p in "${paths[@]}"; do
+    name=$(basename "$p")
+    # Real filenames inside the folder, not random slugs — the listing page is the
+    # deliverable, and "anim.mov" reads better there than "7875cd.mov". A directory
+    # in the selection keeps its own name as a subfolder.
+    if [ -d "$p" ]; then
+      put_tree "$p" "$prefix/$name/"
+    else
+      put "$p" "$prefix/$name"
+      [ -n "$FIRST_URL" ] || FIRST_URL=$PUT_URL
+    fi
+  done
+  url=$(folder_url "$FIRST_URL" "$prefix")
+  label="${#paths[@]} items → /$prefix/"
+elif [ -d "${paths[0]}" ]; then
+  # A single directory keeps its own name: …/shots/ rather than a random prefix.
+  name=$(basename "${paths[0]%/}")
+  put_tree "${paths[0]}" "$name/"
+  url=$(folder_url "$FIRST_URL" "$name")
+  label="$name/"
+else
+  # A lone file gets a random slug and its real extension, so the Worker types it
+  # from the key and nothing about the local filename leaks into a public URL.
+  name=$(basename "${paths[0]}")
+  case "$name" in
+  *.*) ext=".${name##*.}" ;;
+  *) ext="" ;;
+  esac
+  put "${paths[0]}" "$(slug)$ext"
+  url=$PUT_URL
+  label="${url##*/}"
+fi
+
+[ -n "$tmp" ] && rm -f "$tmp"
+
+# The bare link, no trailing newline — so a paste into Slack or a browser bar doesn't
+# submit early or leave a dangling blank line.
+printf '%s' "$url" | pbcopy
+notify "Copied to clipboard" "$label"
+echo "$url"
