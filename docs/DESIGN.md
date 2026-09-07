@@ -4,6 +4,54 @@ Why things are the way they are. `CLAUDE.md` carries what every session needs;
 this file carries the decisions that were arguable, with the evidence that
 settled them. Newest first.
 
+## One repo, two sides, one number between them (2026-09-07)
+
+The Worker and its clients are a contract: a route shape on one side, a parser on
+the other. They live in one repository, with the Worker at the root (the Deploy
+button's expectation) and everything client-side in `packages/cli/` as a bun
+workspace.
+
+A second repository for the client was considered and rejected, because it is the
+thing that manufactures drift. Here, one PR changes a route and its client
+together; one `bun run check` proves they still agree; the button clones the whole
+tree, so a fork carries the client inert whether or not it ever runs it; and
+publishing later is `bun publish` from the package directory rather than a
+migration. The phase-6 plugin manifest will point at the same directory.
+
+`macos/` stays outside the package. It is a human install — a bash script and a
+signed Shortcut — not something anyone would `npm i`.
+
+**The contract is a number, because the two sides are allowed to be different
+ages.** This repo is a template: a fork can lag upstream by months and still be
+talked to by a client from today. So `GET /api/auth` answers `{ contract: 1 }`,
+and the client refuses a version it does not know, naming both. The failure that
+buys is legibility — without it, a mismatch shows up three calls later as a field
+that isn't there, which reads like a bug in whichever side you happen to be
+looking at.
+
+`SUPPORTED_CONTRACTS` is a list rather than a constant so that adding 2 does not
+silently drop 1: dropping support should be a decision someone makes, not a
+side effect of adding support for something else. Bump the number only for a
+change a current client cannot survive — adding a field is not one of those.
+
+## The Cloudflare API gets a door before it gets callers (2026-09-07)
+
+`packages/cli/src/cloudflare.ts` has no production caller. It exists because
+phase 5 (`cdn setup`) is the post-button checklist done from code — the
+custom-domain route, the Zero Trust app and its bypass, Browser Cache TTL,
+minting the narrow purge token — and every one of those is the same three lines
+with a different path. Writing them once, now, means that phase adds calls rather
+than plumbing, and its tests are the caller in the meantime.
+
+The one thing worth knowing before writing any of those calls: **Cloudflare
+returns `200` with `success: false`**. The status code is not the check, and a
+client that trusts it accepts failures as wins. That is pinned by a test rather
+than by a comment.
+
+`fetch` is injectable for the same reason it is in `upload.ts` — and not only for
+tests: `cdn setup --dry-run` has to say what it *would* do, and a client that can
+be handed a recorder is a client that can be handed a dry run.
+
 ## Two runtimes, two test runners (2026-09-07)
 
 The hooks run in Bun and the Worker runs in workerd, and that is not a thing to
@@ -29,7 +77,7 @@ The two mirror hooks used to spawn a `share` CLI, and patch `PATH` so that CLI
 could find Homebrew, so it could find a password manager, so it could find the
 upload token. Four links, one purpose: answer *where is the token*.
 
-`hooks/hosts.ts` answers it in one place — `~/.config/cdn/hosts/<host>.env` —
+`packages/cli/src/hosts.ts` answers it in one place — `~/.config/cdn/hosts/<host>.env` —
 and the chain collapses. What is left is a POST with a bearer, which `fetch`
 already does. The hooks now depend on nothing being installed: no CLI on disk, no
 PATH assumption, no password manager.

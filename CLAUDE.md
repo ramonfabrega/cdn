@@ -31,12 +31,14 @@ optional purge vars are read through `optionalVar()` rather than declared, and
 `.dev.vars.example` + `package.json` `cloudflare.bindings` are what the button
 prompts from.
 
-Phase 2 landed the same day: `hooks/` holds the two mirror hooks and
-`hooks/hosts.ts`, the one reader of `~/.config/cdn/hosts/<host>.env`. The hooks
-shell out to nothing — no CLI, no PATH patch, no password manager — they resolve
-a host and POST with fetch. **Which host is config, not code**: `CDN_HOST` in a
-Claude Code settings scope's `env`. Do not add a directory→host map; the settings
-already resolve user → project → local.
+Phases 2–4 landed the same day. The client half is `packages/cli/`: the `cdn`
+CLI (incur), the two mirror hooks, and `src/hosts.ts` — the one reader of
+`~/.config/cdn/hosts/<host>.env`. Nothing shells out: no CLI on disk, no PATH
+patch, no password manager; they resolve a host and POST with fetch. `macos/` is
+the same three lines in bash and curl, for a Mac with nothing installed.
+**Which host is config, not code**: `CDN_HOST` in a Claude Code settings scope's
+`env`. Do not add a directory→host map; the settings already resolve user →
+project → local.
 
 Who invokes what, measured on the author's instance: sessions and hooks make
 most uploads; humans use the explorer's drop zone and the Shortcut; the CLI
@@ -94,12 +96,20 @@ cutover, which is a deliberate, one-time, human-approved sequence:
 
 ## Conventions
 
+- **Repo shape**: the Worker is the ROOT (the Deploy button expects that);
+  everything client-side — CLI, hooks, host resolution, generated skill — is
+  `packages/cli/`, a bun workspace. `macos/` stays outside it: a human install,
+  not a package. One repo for a two-sided contract on purpose; see DESIGN.md.
 - Two runtimes, two runners: `src/` is workerd (vitest, local Miniflare R2),
-  `hooks/` is Bun (`bun:test`). vitest is scoped to `src/**` in its config so it
-  never sweeps up Bun code; `bun run check` runs both, so CI stays one command.
-  Hermetic — no real R2, no network off the machine. `bun run test` never
-  `bun test` (bun's own runner shadows the script and exits 0); the `bun test
-  hooks/` inside `check` is that runner on purpose, aimed at one directory.
+  `packages/cli/` + `macos/` are Bun (`bun:test`). vitest is scoped to `src/**`
+  in its config so it never sweeps up Bun code; `bun run check` runs both, so CI
+  stays one command. Hermetic — no real R2, no network off the machine. `bun run
+  test` never `bun test` (bun's own runner shadows the script and exits 0); the
+  `bun test packages/cli macos` inside `check` is that runner on purpose.
+- **The contract number.** `GET /api/auth` answers `{ contract: N }`; the client's
+  `SUPPORTED_CONTRACTS` is its twin. Bump only for a change a current client
+  cannot survive, and move both in one commit — `bun run check` is what proves
+  they agree.
 - Boundary parsing, no casts; zod at the edges; `defined<T>()`-style
   optional handling over `as`.
 - Read `README.md` for the architecture, the caching policy, the
