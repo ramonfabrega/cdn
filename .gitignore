@@ -2,3 +2,10 @@ node_modules/
 .dev.vars
 .wrangler/
 worker-configuration.d.ts
+
+# Claude Code worktrees + macOS noise
+.claude/worktrees/
+.DS_Store
+
+# Signed binary minted from macos/share-to-cdn.plist — the plist is the source of truth
+macos/*.shortcut
