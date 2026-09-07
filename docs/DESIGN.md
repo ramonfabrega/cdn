@@ -49,6 +49,37 @@ world-readable token, say — the step fails loudly and says the secret is only
 shown once, because at that point the value is genuinely gone and the fix is to
 delete the secret and re-run rather than to hunt for it.
 
+## The button seeds, it does not fork (2026-09-07)
+
+The repository the Deploy button creates has one commit, `source repo import`.
+Not a fork: a squashed snapshot with no ancestor in common with this repo, so
+`git merge upstream` can never work on it. The README said "forks this repo into
+your account", which was wrong in the way that matters — it implies an update
+path that does not exist.
+
+**And the fix is better than the thing it replaces**, because of what the same
+press established. The button rewrote exactly two lines, both in
+`wrangler.jsonc`. `cdn setup` also edits only `wrangler.jsonc`. Nothing else in
+the tree is instance-specific — which is phase 1's thesis ("the only
+instance-specific surface was four brand strings and the wrangler config", minus
+the brand strings it deleted) verified end to end rather than asserted.
+
+So an instance is *the template's files plus its own `wrangler.jsonc`*, and
+taking an update is a checkout rather than a merge:
+
+```sh
+git checkout upstream/master -- . ':!wrangler.jsonc'
+```
+
+There is nothing to resolve, because nothing else diverges. The one thing that
+needs a human is the upstream diff of `wrangler.jsonc` itself — a new binding or
+compatibility flag appears there and nowhere else — so the command skips it and
+the README says to read it.
+
+This is also why the template cannot be its own deployment source: `cdn setup`
+writes a domain into that file, and this repo names no domain. Public template,
+private instance, one file between them.
+
 ## GitHub Actions checks, Workers Builds deploys (2026-09-07)
 
 CLAUDE.md's locked decisions said "Workers Builds is CI (`bun run check`)". The

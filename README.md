@@ -8,7 +8,7 @@ way in. One Worker owns both the CDN and its admin UI; no S3 client, no signing,
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ramonfabrega/cdn)
 
-Pressing that forks this repo into your account, provisions an **R2 bucket** and the Worker, wires
+Pressing that copies this repo into your account, provisions an **R2 bucket** and the Worker, wires
 **Workers Builds** so every push to your production branch deploys, and prompts you for the secrets
 below. You get a working CDN on `<worker>.<your-subdomain>.workers.dev` before you own a
 domain — and nothing in this repo names a domain, so the moment you add one, every page, link and
@@ -501,7 +501,7 @@ buys.
 ## Deploy
 
 Deploys are **automatic**, via [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/)
-— Cloudflare's own Git CI, which the Deploy button connects to your fork for you. Merge to your
+— Cloudflare's own Git CI, which the Deploy button connects to your copy for you. Merge to your
 production branch and the Worker ships; open a PR and you get a preview URL. `bun run deploy` still
 works for an out-of-band push.
 
@@ -563,6 +563,36 @@ touching vitest or biome, which is why the script is `check` and not `ci`.
 Build watch paths, caching, and the rest are only editable **after** the repo is connected (the
 connect modal doesn't show them). Connecting does not build anything retroactively — the first
 build needs a fresh commit.
+
+### Keeping an instance up to date
+
+The button does **not** fork this repo in the git sense. It creates a new repository whose entire
+history is one commit — `source repo import` — so there is no common ancestor and `git merge
+upstream` can never work. Measured on a real press, 2026-09-07.
+
+That sounds worse than it is, because of what the same press established: the button changed
+**only `wrangler.jsonc`** (the Worker's `name` and the bucket binding), and `cdn setup` edits
+**only `wrangler.jsonc`** too. So the whole of your instance is:
+
+> **the template's files, plus your `wrangler.jsonc`.**
+
+Which makes an update a copy rather than a merge, with nothing to resolve:
+
+```sh
+git remote add upstream https://github.com/<this repo>       # once
+git fetch upstream
+git checkout upstream/master -- . ':!wrangler.jsonc'         # their files, your config
+git commit -m "sync template"
+git push                                                     # Workers Builds deploys
+```
+
+Read the upstream diff for `wrangler.jsonc` yourself before you push — that is the one file the
+command deliberately skips, and the one place a new binding or compatibility flag would appear.
+
+**Why not deploy from the template repo directly?** Because `cdn setup` writes your domain into
+`wrangler.jsonc` — the `routes` line, `CDN_ZONE_ID`, `CDN_PUBLIC_ORIGIN` — and this repo names no
+domain and should not start. Your instance is private; the template is public; the config is the
+only thing between them.
 
 ### Zone settings (not dashboard-only any more)
 
