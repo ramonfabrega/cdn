@@ -46,22 +46,14 @@ export async function findZone(
 /**
  * Read the zone's Browser Cache TTL.
  *
- * Only READ. This setting is the one piece of the caching policy the Worker
- * cannot enforce — Cloudflare rewrites `max-age` on anything served from cache,
- * so the dashboard default of 4 hours silently undoes `max-age=0` — and setup
- * still does not change it, deliberately:
+ * This setting is the one piece of the caching policy the Worker cannot enforce:
+ * Cloudflare rewrites `max-age` on anything served from cache, so the dashboard
+ * default of 4 hours silently undoes the Worker's own `max-age=0`.
  *
- *   1. The API takes an integer. Which integer means the dashboard's "Respect
- *      Existing Headers" is NOT documented: the schema says only `minimum 0`,
- *      and all three cache doc pages describe the option purely as a dropdown
- *      label. `0` is the widespread belief and it is probably right. Probably is
- *      not good enough to write.
- *   2. It is ZONE-WIDE. A wrong guess doesn't misconfigure this CDN, it changes
- *      browser caching for every other hostname on somebody's domain.
- *
- * So the step reads it, says what it is, and tells you the two clicks. A setup
- * command may automate a thing it understands; this one it does not, and saying
- * so is better than a confident write with a blast radius.
+ * For a day this was read and never written, because which integer means the
+ * dashboard's "Respect Existing Headers" is not documented anywhere — the schema
+ * says only `minimum 0`, and every cache page describes the option as a dropdown
+ * label. See `RESPECT_EXISTING_HEADERS` for what settled it.
  */
 export async function browserCacheTtl(
   cf: CloudflareOptions,
@@ -69,16 +61,53 @@ export async function browserCacheTtl(
 ): Promise<ApiResult<number | undefined>> {
   const res = await call<unknown>(cf, "GET", `/zones/${zoneId}/settings/browser_cache_ttl`);
   if (!res.ok) return res;
-  const value =
-    typeof res.result === "object" && res.result !== null
-      ? Reflect.get(res.result, "value")
-      : undefined;
-  return { ok: true, result: typeof value === "number" ? value : undefined };
+  return { ok: true, result: readTtl(res.result) };
 }
 
-/** What the dashboard's "Respect Existing Headers" is believed to be. Used only
-    to decide whether to say "already right" — never written. */
+const readTtl = (result: unknown): number | undefined => {
+  const value =
+    typeof result === "object" && result !== null ? Reflect.get(result, "value") : undefined;
+  return typeof value === "number" ? value : undefined;
+};
+
+/**
+ * The integer the API takes for the dashboard's "Respect Existing Headers".
+ *
+ * MEASURED, not believed. The docs do not publish the mapping, so it was read
+ * off a zone already known to be set to that option in the dashboard:
+ * `GET /zones/{id}/settings/browser_cache_ttl` answered `{"value": 0}`. That is
+ * a single observation rather than a documented contract — but it is an
+ * observation of exactly the question, which is more than the docs offer, and it
+ * is why this constant is now safe to WRITE and not only to compare against.
+ *
+ * Keep in mind what it costs to be wrong here, because it has not changed: this
+ * setting is ZONE-WIDE. Setting it does not only affect this CDN's hostname, it
+ * affects browser caching for every other hostname on the domain. That is why
+ * the step names the whole zone in what it reports, and why it would be a
+ * mistake to quietly widen this function to any other zone setting.
+ */
 export const RESPECT_EXISTING_HEADERS = 0;
+
+/**
+ * Set the zone's Browser Cache TTL to "Respect Existing Headers".
+ *
+ * `PATCH /zones/{zone_id}/settings/browser_cache_ttl` with `{ value }` — the
+ * per-setting edit endpoint, not the bulk one, so nothing else on the zone is in
+ * the request at all. A caller that got here has already read the current value
+ * and found it different; the response is read back so the verdict reports what
+ * the zone now says rather than what was asked for.
+ */
+export async function setBrowserCacheTtl(
+  cf: CloudflareOptions,
+  zoneId: string,
+  value: number = RESPECT_EXISTING_HEADERS
+): Promise<ApiResult<number | undefined>> {
+  const res = await call<unknown>(cf, "PATCH", `/zones/${zoneId}/settings/browser_cache_ttl`, {
+    value,
+  });
+  if (!res.ok) return res;
+  return { ok: true, result: readTtl(res.result) };
+}
 
 export type PermissionGroup = { id: string; name: string };
 

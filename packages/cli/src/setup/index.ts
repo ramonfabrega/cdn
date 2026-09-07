@@ -43,6 +43,7 @@ import {
   listTokens,
   permissionGroup,
   RESPECT_EXISTING_HEADERS,
+  setBrowserCacheTtl,
   verifyToken,
 } from "./zone.ts";
 
@@ -177,22 +178,42 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
   }
 
   // ── b. browser cache TTL ───────────────────────────────────────────────────
-  // Read, never written. See the long note on browserCacheTtl(): the integer
-  // that means "Respect Existing Headers" is not documented, and this setting is
-  // zone-wide, so a confident guess would change browser caching for every other
-  // hostname on the domain.
+  // Written, now that the integer is known — see RESPECT_EXISTING_HEADERS, which
+  // was measured off a zone already set to that option rather than assumed. What
+  // has not changed is the blast radius: this setting is ZONE-WIDE, so the
+  // verdict names the zone and not the CDN's hostname. Nobody should learn from
+  // a later surprise that `cdn setup` touched a whole domain.
   const ttl = await browserCacheTtl(cf, found.id);
   if (!ttl.ok) {
     steps.push(step("browser cache TTL", "failed", ttl.error));
   } else if (ttl.result === RESPECT_EXISTING_HEADERS) {
-    steps.push(step("browser cache TTL", "present", "already respecting existing headers"));
-  } else {
+    steps.push(
+      step("browser cache TTL", "present", `${found.name} already respects existing headers`)
+    );
+  } else if (dryRun) {
     steps.push(
       step(
         "browser cache TTL",
-        "manual",
-        `currently ${ttl.result ?? "unknown"}s. Set Caching → Configuration → Browser Cache TTL to "Respect Existing Headers" on ${found.name}. Not automated: which integer the API takes for that option is undocumented, and the setting is zone-wide.`
+        "skipped",
+        `would set ${found.name} to "Respect Existing Headers" (${RESPECT_EXISTING_HEADERS}) — currently ${ttl.result ?? "unknown"}s. Zone-wide: it affects every hostname on ${found.name}, not only ${domain}.`
       )
+    );
+  } else {
+    const set = await setBrowserCacheTtl(cf, found.id);
+    steps.push(
+      set.ok && set.result === RESPECT_EXISTING_HEADERS
+        ? step(
+            "browser cache TTL",
+            "created",
+            `${found.name} now respects existing headers (was ${ttl.result ?? "unknown"}s). Zone-wide: this affects every hostname on ${found.name}, not only ${domain}.`
+          )
+        : step(
+            "browser cache TTL",
+            "failed",
+            set.ok
+              ? `asked for ${RESPECT_EXISTING_HEADERS} but ${found.name} came back as ${set.result ?? "unreadable"} — set Caching → Configuration → Browser Cache TTL to "Respect Existing Headers" by hand`
+              : `${set.error} — needs Zone Settings Write; set Caching → Configuration → Browser Cache TTL to "Respect Existing Headers" by hand`
+          )
     );
   }
 

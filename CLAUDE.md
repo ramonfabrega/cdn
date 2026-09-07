@@ -119,8 +119,10 @@ cutover, which is a deliberate, one-time, human-approved sequence:
 - Boundary parsing, no casts; zod at the edges; `defined<T>()`-style
   optional handling over `as`.
 - Read `README.md` for the architecture, the caching policy, the
-  dashboard-only settings (Workers Builds, zone Browser Cache TTL, the
-  bucket's lifecycle rule) and the purge-token recipe. Phase 1 rewrote its
+  dashboard-only settings (Workers Builds, the bucket's lifecycle rule) and
+  the purge-token recipe. Zone Browser Cache TTL was on that list until
+  `cdn setup` learned to write it — the integer meaning "Respect Existing
+  Headers" was measured off a zone known to be set that way, not guessed. Phase 1 rewrote its
   opening and its instance-specific passages; the author's operational log
   came out with them and lives in the wiki. It names no domain — keep it
   that way.

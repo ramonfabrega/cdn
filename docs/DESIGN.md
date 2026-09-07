@@ -4,6 +4,55 @@ Why things are the way they are. `CLAUDE.md` carries what every session needs;
 this file carries the decisions that were arguable, with the evidence that
 settled them. Newest first.
 
+## The refusal that ended in a measurement (2026-09-07)
+
+`cdn setup` sets Browser Cache TTL now. The interesting part is not the write —
+it is four lines, exactly as predicted — but what it took to earn it, and what
+did *not* change when it was earned.
+
+**What the refusal was actually about.** The docs publish no mapping from the
+dashboard's "Respect Existing Headers" to the integer the API takes; the schema
+says `minimum 0` and stops. `0` was the widespread belief, and a widespread
+belief is not a citation. The step therefore read and reported, and said in the
+report why it was not writing — which is a different thing from omitting the
+step, and is the whole reason the gap stayed visible long enough to be closed.
+
+**What closed it was a measurement, not a better search.** The zone
+`ramonfabrega.com` was already set to "Respect Existing Headers" in its
+dashboard. So:
+
+```sh
+curl -s "https://api.cloudflare.com/client/v4/zones/$ZONE/settings/browser_cache_ttl" \
+  -H "Authorization: Bearer $TOKEN" | jq '.result.value'
+# 0        (modified_on 2026-09-04)
+```
+
+That is one observation, not a contract — and it is an observation of *exactly*
+the question the docs decline to answer, taken from a zone whose dashboard state
+was known independently. The constant in `zone.ts` carries that provenance in
+its comment, because a bare `= 0` is precisely the unfalsifiable number this
+project keeps refusing to ship. The read-only token that took the measurement
+had one permission that mattered and was deleted after; the number is not
+sensitive, and it never needed to be a credential in this repo.
+
+**The zone-wide part did not go away, and is not the same objection.** The
+original note gave the blast radius as the reason a *wrong* guess was
+unacceptable. With the value right, the amplifier is gone — but a setup command
+for one Worker still changes a setting that governs every hostname on the
+domain, and that deserves to be said out loud rather than inferred later from
+someone's cache behaviour. So the verdict names the ZONE, not the CDN's
+hostname: "example.com now respects existing headers … this affects every
+hostname on example.com, not only cdn.example.com". `--dry-run` says the same
+sentence before anything happens. The step is automated; it is not silent.
+
+**The write is `PATCH /zones/{zone_id}/settings/{setting_id}`** — "Updates a
+single zone setting by the identifier", body `{ value }`, permission "Zone
+Settings Write". The per-setting endpoint rather than the bulk one, so no other
+zone setting is even present in the request; the response is read back and
+compared, so the verdict reports what the zone now says rather than what was
+asked for. A token with Zone Settings Read but not Write is the likely failure
+and has its own test: it fails loudly and hands back the two clicks.
+
 ## Access protects the Worker, not a hostname (2026-09-07)
 
 `cdn setup --access` used to create an Access application on the hostname you
@@ -90,6 +139,9 @@ misconfigure this CDN; it would change browser caching for every other hostname
 on somebody's domain. So the step reads the value, says what to set it to, and
 says why it isn't setting it. If the mapping is ever confirmed, this becomes four
 lines and a test.
+
+*Resolved the same day — it was four lines and a test. See "The refusal that
+ended in a measurement" above.*
 
 **It does not create a Zero Trust organization.** Creating one picks a permanent
 team domain — `<name>.cloudflareaccess.com`, which then appears in every login

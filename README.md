@@ -43,17 +43,25 @@ ends by naming what it cannot do at all.
 | Step | What it does |
 | --- | --- |
 | custom domain | Adds the `routes` line to `wrangler.jsonc` and deploys; wrangler provisions the DNS record and certificate. |
-| browser cache TTL | **Reads and reports only** — see below. |
+| browser cache TTL | Sets the zone to **"Respect Existing Headers"**, without which Cloudflare overwrites the Worker's `max-age` on every cache HIT. The one step that reaches past this CDN — see below. |
 | purge token | Mints an account-owned token with *only* Cache Purge on your zone, verifies it, and stores it as `CDN_PURGE_TOKEN`. |
 | purge vars | Adds `CDN_ZONE_ID` and `CDN_PUBLIC_ORIGIN` to `wrangler.jsonc`. |
 | access | With `--access`: an Access application on the **Worker**, allowing who you named — which covers its routes, Custom Domains, `workers.dev` hostname *and* preview URLs in one — **plus a bypass on `/api/upload`** so every writer keeps working. Falls back to a hostname application if it cannot resolve the Worker, and says so. |
 
-**The one step it won't do for you.** Browser Cache TTL must be **"Respect Existing Headers"**
-(Caching → Configuration) — it's load-bearing and the Worker cannot enforce it, because Cloudflare's
-4-hour default *overwrites* the `max-age` of anything served from cache. `cdn setup` reads it and
-tells you, but does not set it: the API takes an integer, and which integer means that option is
-undocumented, while the setting is zone-wide. Being wrong there wouldn't misconfigure this CDN, it
-would change browser caching for every other hostname on your domain. Two clicks, once.
+**The one step that reaches past this CDN.** Browser Cache TTL must be **"Respect Existing
+Headers"** (Caching → Configuration) — it's load-bearing and the Worker cannot enforce it, because
+Cloudflare's 4-hour default *overwrites* the `max-age` of anything served from cache. `cdn setup`
+now sets it, and it is the only step that changes something **zone-wide**: it affects browser
+caching for every hostname on the domain, not just this CDN's. The verdict says so by naming the
+zone, and `--dry-run` says it before anything happens. If you'd rather do it by hand, it's two
+clicks and setup will report `present` afterwards.
+
+This step was deliberately read-only until 2026-09-07, because the API takes an integer and which
+integer means "Respect Existing Headers" is documented nowhere — the schema says only `minimum 0`.
+It writes now because the mapping was **measured** rather than assumed: read back from a zone
+already set to that option in the dashboard, `GET /zones/{id}/settings/browser_cache_ttl` answers
+`0`. One observation of exactly the right question beats a plausible guess, and it's why the
+constant in `zone.ts` carries its evidence.
 
 **The token you give it.** One broad token, for one run, read from the environment and written
 nowhere. It is *not* `CDN_PURGE_TOKEN` — that one is narrow, account-owned and minted **by** setup,
@@ -63,7 +71,7 @@ Create it at **Manage Account → Account API Tokens** with:
 | Permission | Scope | Needed for |
 | --- | --- | --- |
 | `Zone Read` | the zone | Finding the zone id from your domain |
-| `Zone Settings Read` | the zone | Reading Browser Cache TTL |
+| `Zone Settings Read` + `Write` | the zone | Reading and setting Browser Cache TTL |
 | `Account API Tokens Read` + `Write` | the account | Listing permission groups, and minting the purge token |
 | `Access: Apps and Policies Read` + `Write` | the account | `--access` only — the application and its bypass |
 | `Access: Organizations, Identity Providers, and Groups Read` | the account | `--access` only — finding your team domain |
@@ -483,10 +491,11 @@ Build watch paths, caching, and the rest are only editable **after** the repo is
 connect modal doesn't show them). Connecting does not build anything retroactively — the first
 build needs a fresh commit.
 
-### Zone settings (also dashboard-only)
+### Zone settings (not dashboard-only any more)
 
-One setting on the **zone**, not the Worker, is load-bearing for the caching policy and likewise
-has no in-repo home, so it's recorded here too:
+One setting on the **zone**, not the Worker, is load-bearing for the caching policy and has no
+in-repo home, so it's recorded here. `cdn setup` sets it; this is what it sets, and what to put
+back if it ever drifts:
 
 | Zone → Caching → Configuration | Value |
 | --- | --- |
@@ -606,7 +615,8 @@ Two gotchas when handling the token:
   this policy the Worker cannot enforce. Cloudflare rewrites `max-age` on any response served from
   cache, so with the dashboard default (4 hours) a `cf-cache-status: HIT` went out as
   `max-age=14400` no matter what the Worker set — silently undoing the `max-age=0` above for every
-  client that honors Cache-Control. Caching → Configuration → Browser Cache TTL. To check:
+  client that honors Cache-Control. `cdn setup` sets it (zone-wide, so it says so); by hand it is
+  Caching → Configuration → Browser Cache TTL. To check:
   `curl -so /dev/null $U; curl -sD- -o /dev/null $U | grep -i 'cf-cache-status\|cache-control'` —
   a HIT must still say `max-age=0`. (Sparkle happens to be immune: `SPUDownloadDriver` fetches the
   appcast with `NSURLRequestReloadIgnoringLocalCacheData`. Browsers are not.)

@@ -72,8 +72,16 @@ const cloudflare = (world: World): typeof globalThis.fetch => {
       const name = url.searchParams.get("name");
       return json(world.zones.filter((z) => z.name === name));
     }
-    if (method === "GET" && path === `/zones/${ZONE.id}/settings/browser_cache_ttl`) {
-      return json({ id: "browser_cache_ttl", value: world.browserCacheTtl, editable: true });
+    if (path === `/zones/${ZONE.id}/settings/browser_cache_ttl`) {
+      if (method === "PATCH") {
+        // The real endpoint answers with the setting as it now stands, which is
+        // what the step reads back rather than trusting its own request.
+        const value = Reflect.get(Object(body), "value");
+        if (typeof value === "number") world.browserCacheTtl = value;
+      }
+      if (method === "GET" || method === "PATCH") {
+        return json({ id: "browser_cache_ttl", value: world.browserCacheTtl, editable: true });
+      }
     }
     if (method === "GET" && path === `/accounts/${ACCOUNT}/tokens`) return json(world.tokens);
     if (method === "GET" && path === `/accounts/${ACCOUNT}/tokens/permission_groups`) {
@@ -152,6 +160,22 @@ type RunOptions = {
   config?: string;
 };
 
+/** The options `run` passes, exposed for the one test that needs its own fetch
+    (a token that can read the zone setting but not write it). */
+const baseOptions = (o: { world: World; fetch: typeof globalThis.fetch }) => ({
+  domain: DOMAIN,
+  access: [],
+  accessHostname: false,
+  dryRun: false,
+  configPath: "wrangler.jsonc",
+  accountId: ACCOUNT,
+  cf: { token: "setup-token", fetch: o.fetch },
+  run: () => Promise.resolve({ code: 0, stdout: "", stderr: "" }),
+  commands: [],
+  readFile: () => Promise.resolve(TEMPLATE),
+  writeFile: () => Promise.resolve(),
+});
+
 const run = async (options: RunOptions = {}) => {
   const world = options.world ?? emptyWorld();
   const dryRun = options.dryRun === true;
@@ -197,7 +221,7 @@ describe("cdn setup, first run", () => {
     expect(verdicts(report)).toEqual({
       zone: "present",
       "custom domain": "created",
-      "browser cache TTL": "manual",
+      "browser cache TTL": "created",
       "purge token": "created",
       "purge vars": "created",
       access: "skipped",
@@ -239,7 +263,7 @@ describe("cdn setup, first run", () => {
     expect(verdicts(report)).toEqual({
       zone: "present",
       "custom domain": "skipped",
-      "browser cache TTL": "manual",
+      "browser cache TTL": "skipped",
       "purge token": "skipped",
       "purge vars": "skipped",
       access: "skipped",
@@ -266,7 +290,7 @@ describe("idempotence", () => {
     expect(verdicts(second.report)).toEqual({
       zone: "present",
       "custom domain": "present",
-      "browser cache TTL": "manual",
+      "browser cache TTL": "present",
       "purge token": "present",
       "purge vars": "present",
       access: "skipped",
@@ -285,23 +309,69 @@ describe("idempotence", () => {
 });
 
 describe("browser cache TTL", () => {
-  // Read, never written: the integer meaning "Respect Existing Headers" is not
-  // documented, and the setting is zone-wide.
-  test("is reported as manual, with the current value and the reason", async () => {
+  // Written now, because the integer is known. It was read off a zone already
+  // set to "Respect Existing Headers" in the dashboard, which answered 0 — a
+  // measurement of exactly the question the docs decline to answer.
+  test("is set to respect existing headers, and says the zone it changed", async () => {
     const { report, world } = await run();
     const step = report.steps.find((s) => s.step === "browser cache TTL");
-    expect(step?.verdict).toBe("manual");
-    expect(step?.detail).toContain("14400");
-    expect(step?.detail).toContain("Respect Existing Headers");
-    expect(step?.detail).toContain("zone-wide");
-    // And nothing was PATCHed at it.
-    expect(world.writes.some((w) => w.url.includes("browser_cache_ttl"))).toBe(false);
+    expect(step?.verdict).toBe("created");
+    expect(step?.detail).toContain("14400"); // what it was
+    expect(world.browserCacheTtl).toBe(0);
+
+    const patch = world.writes.find((w) => w.url.includes("browser_cache_ttl"));
+    expect(patch?.method).toBe("PATCH");
+    expect(patch?.body).toEqual({ value: 0 });
   });
 
-  test("already-correct is reported as present", async () => {
+  // The blast radius did not change when the uncertainty did: this is the one
+  // step that reaches outside the CDN's own hostname, and a verdict that hid
+  // that would be the wrong kind of quiet.
+  test("names the whole zone, not just the CDN's hostname", async () => {
+    const { report } = await run();
+    const detail = report.steps.find((s) => s.step === "browser cache TTL")?.detail ?? "";
+    expect(detail).toContain("every hostname on example.com");
+    expect(detail).toContain("not only cdn.example.com");
+  });
+
+  test("--dry-run says what it would set and writes nothing", async () => {
+    const { report, world } = await run({ dryRun: true });
+    const step = report.steps.find((s) => s.step === "browser cache TTL");
+    expect(step?.verdict).toBe("skipped");
+    expect(step?.detail).toContain("Respect Existing Headers");
+    expect(step?.detail).toContain("every hostname on example.com");
+    expect(world.browserCacheTtl).toBe(14400);
+    expect(world.writes).toEqual([]);
+  });
+
+  test("already-correct is reported as present, and nothing is written", async () => {
     const world = { ...emptyWorld(), browserCacheTtl: 0 };
     const { report } = await run({ world });
     expect(verdicts(report)["browser cache TTL"]).toBe("present");
+    expect(world.writes.some((w) => w.url.includes("browser_cache_ttl"))).toBe(false);
+  });
+
+  // A token with Zone Settings Read but not Write is the likely failure, and the
+  // step has to leave you able to finish the job by hand.
+  test("a refused write fails loudly and hands back the two clicks", async () => {
+    const world = emptyWorld();
+    const inner = cloudflare(world);
+    const denied: typeof globalThis.fetch = async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (method === "PATCH" && url.includes("browser_cache_ttl")) {
+        return new Response(
+          JSON.stringify({ success: false, errors: [{ message: "Authentication error" }] }),
+          { status: 403 }
+        );
+      }
+      return inner(input, init);
+    };
+    const report = await runSetup(baseOptions({ world, fetch: denied }));
+    const step = report.steps.find((s) => s.step === "browser cache TTL");
+    expect(step?.verdict).toBe("failed");
+    expect(step?.detail).toContain("Zone Settings Write");
+    expect(step?.detail).toContain("by hand");
   });
 });
 
