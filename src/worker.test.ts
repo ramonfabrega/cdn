@@ -288,6 +288,32 @@ describe("auth gate", () => {
     expect(await login.text()).toContain("password");
   });
 
+  // `cdn auth login` verifies a token before writing it to disk; without this
+  // route the only way to test a bearer was to upload a file with it.
+  test("GET /api/auth is 204 for the upload bearer and 401 for anything else", async () => {
+    const ok = await SELF.fetch(`${BASE}/api/auth`, {
+      headers: { authorization: "Bearer test-upload-token" },
+    });
+    expect(ok.status).toBe(204);
+    expect(await ok.text()).toBe("");
+
+    expect((await SELF.fetch(`${BASE}/api/auth`)).status).toBe(401);
+    expect(
+      (await SELF.fetch(`${BASE}/api/auth`, { headers: { authorization: "Bearer wrong" } })).status
+    ).toBe(401);
+  });
+
+  // The bearer's authority is exactly two routes. A check that widened it to
+  // everything under /api/ would hand a machine token the destructive APIs.
+  test("the bearer still cannot reach the destructive APIs", async () => {
+    const res = await SELF.fetch(`${BASE}/api/delete`, {
+      method: "POST",
+      headers: { authorization: "Bearer test-upload-token", "content-type": "application/json" },
+      body: JSON.stringify({ key: "whatever.txt" }),
+    });
+    expect(res.status).toBe(401);
+  });
+
   test("the login page brands itself with the request host", async () => {
     const html = await (await SELF.fetch("https://drop.example.org/login")).text();
     expect(html).toContain("<title>drop · sign in</title>");

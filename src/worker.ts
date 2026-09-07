@@ -132,6 +132,11 @@ const sessionSecret = (env: Env) =>
 const bearerOk = (env: Env, auth?: string) =>
   !!env.CDN_UPLOAD_TOKEN && auth === `Bearer ${env.CDN_UPLOAD_TOKEN}`;
 
+// The routes the upload bearer reaches, and the whole of its authority. Kept as
+// a set rather than a prefix so widening it is a deliberate edit: everything
+// under /api/ that isn't listed here needs the cookie.
+const BEARER_PATHS = new Set(["/api/upload", "/api/auth"]);
+
 const app = new Hono<{ Bindings: Env }>();
 
 // Default to no-store (the explorer/API must never cache — fixes "reload shows
@@ -147,9 +152,10 @@ app.use("*", async (c, next) => {
 app.use("*", async (c, next) => {
   const path = new URL(c.req.url).pathname;
   if (!isAdminPath(path)) return next();
-  // Uploads may authenticate with the bearer token (the `share` CLI); everything
+  // Two routes take the bearer: the write itself, and the no-op that exists so a
+  // client can find out whether its bearer works without writing. Everything
   // else — the explorer + destructive APIs — requires the signed session cookie.
-  if (path === "/api/upload" && bearerOk(c.env, c.req.header("authorization"))) return next();
+  if (BEARER_PATHS.has(path) && bearerOk(c.env, c.req.header("authorization"))) return next();
   const ok = await getSignedCookie(c, sessionSecret(c.env), COOKIE);
   if (ok !== "ok") {
     if (path.startsWith("/api/")) return c.json({ error: "unauthorized" }, 401);
@@ -159,6 +165,18 @@ app.use("*", async (c, next) => {
 });
 
 app.get("/health", (c) => c.text("ok"));
+
+// ── auth check ───────────────────────────────────────────────────────────────
+// A cheap authenticated no-op, so a client can find out whether its credential
+// works without writing anything. `cdn auth login` verifies a token before it
+// puts it on disk, and the only alternative was to upload a file — a side effect
+// nobody asked for while logging in, and one that leaves litter in the bucket
+// when the token turns out to be wrong.
+//
+// The gate above does the rejecting: reaching this handler already means a valid
+// bearer or a valid session, so the body is just the good news. 204, because
+// there is nothing to say — the status IS the answer.
+app.get("/api/auth", (c) => c.body(null, 204));
 
 // ── login / logout ──────────────────────────────────────────────────────────
 app.get("/login", (c) => c.html(loginPage(new URL(c.req.url).host)));
