@@ -1,19 +1,57 @@
-# cdn explorer
+# cdn — your own CDN, in one click
 
-A **Cloudflare Worker** that *is* `cdn.ramonfabrega.com`. The apex (`/`) serves a password-gated
-admin/cleanup **explorer**; every other path streams the matching R2 object — public, cached,
-range-capable (this is what `share` links hit). One Worker owns both the CDN and its admin UI.
+A **Cloudflare Worker** that *is* a CDN. Every path streams an object out of an R2 bucket — public,
+cached, range-capable — and the apex (`/`) is a password-gated **explorer** for the same bucket:
+sunburst overview, folder rail, drag-anywhere upload, a search grammar. Folder prefixes render as
+public listing pages with generated unfurl cards. One authenticated `POST /api/upload` is the only
+way in. One Worker owns both the CDN and its admin UI; no S3 client, no signing, no second service.
 
-Companion to the `share` CLI: `share` writes objects (namespaced, with extensions), the explorer
-finds / previews / prunes / re-organizes them. Hono + the R2 binding — **no `passage`/S3 anywhere**.
-The `share` CLI uploads *through* the Worker (`POST /api/upload`, one bearer token) instead of
-signing S3, so the CDN owns every write. The CLI shares **no code** with the Worker — it sends the
-bytes + the bearer and prints the URL the Worker returns; the classification lib stays server-side.
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/ramonfabrega/cdn)
+
+Pressing that forks this repo into your account, provisions an **R2 bucket** and the Worker, wires
+**Workers Builds** so every push to your production branch deploys, and prompts you for the secrets
+below. You get a working CDN on `<worker>.<your-subdomain>.workers.dev` before you own a
+domain — and nothing in this repo names a domain, so the moment you add one, every page, link and
+unfurl card starts saying it (the brand is derived from the request host, not configured).
+
+Runs on the **free plan**: the whole Worker is 3.8 MiB uncompressed against a 64 MiB cap — 6% — og
+cards and all. See [`docs/DESIGN.md`](docs/DESIGN.md) for that measurement.
+
+### After the first deploy
+
+1. **Set the secrets** (the deploy dialog prompts for them; `wrangler secret put <NAME>` later):
+   `CDN_PASSWORD` gates the explorer, `CDN_SESSION_SECRET` signs its cookie, `CDN_UPLOAD_TOKEN` is
+   the bearer every writer uses. Auth fails **closed** — unset means *nobody* gets in, never a
+   default. `.dev.vars.example` documents all four; copy it to `.dev.vars` for local dev.
+2. **Put it on your own domain** — one line in `wrangler.jsonc`, then push. The button can't do
+   this for you: the zone is yours, not Cloudflare's to bind.
+   ```jsonc
+   "routes": [{ "pattern": "cdn.example.com", "custom_domain": true }],
+   ```
+   wrangler provisions the DNS record and the certificate on deploy. Note that taking a custom
+   domain drops the `workers.dev` route that preview URLs hang off — see [Previews](#previews).
+3. **Set the zone's Browser Cache TTL to "Respect Existing Headers"** (Caching → Configuration).
+   This one is load-bearing and the Worker cannot enforce it — Cloudflare's 4-hour default
+   *overwrites* the `max-age` of anything served from cache, silently undoing the freshness policy.
+   See [Zone settings](#zone-settings-also-dashboard-only).
+4. **Optional: make overwrites global.** Add a `CDN_PURGE_TOKEN` secret plus the `CDN_ZONE_ID` /
+   `CDN_PUBLIC_ORIGIN` vars and a write invalidates every edge POP instead of just the one it ran
+   in. Skip it and an overwrite is fresh where you uploaded from and ages out within the hour
+   elsewhere — fine for a screenshot link, not for a release feed. See [Secrets](#secrets).
+5. **Optional: swap the password for real SSO.** The single `CDN_PASSWORD` is deliberately the
+   smallest thing that works for one person. For a team, put **Cloudflare Access** in front of `/`
+   and `/api/*` — it's a zone-level policy, no code change, and the cookie gate stays underneath as
+   a second factor. Object paths must stay outside the Access policy or public links break.
+
+Writers are anything that can `POST` a file with a bearer token: a shell one-liner, a CLI, an
+editor hook, a macOS Shortcut. They share **no code** with the Worker — send the bytes, get the URL
+back — so the classification and key rules stay server-side and there is exactly one write path to
+secure.
 
 ## Files
 
 Source lives under `src/` (Worker app + pure lib + tests); `public/` holds the static UI; the
-package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
+package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the repo root.
 
 - **`src/lib/cdn.ts`** — pure, Worker-internal helpers: MIME map, key→ext classification, and the
   public-URL builder. Zero deps, no runtime-specific imports (own `extname`) → trivially testable.
@@ -41,7 +79,7 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
   `/api/tree|folder|move|rename|delete|permanent` (move/delete take a single key or batch `keys[]`).
   `POST /api/upload?key=<key>[&permanent=1]` streams the raw body into `BUCKET` (content-type from
   the key's extension) — the only write path. It also accepts an `Authorization: Bearer
-  CDN_UPLOAD_TOKEN` (the `share` CLI), scoped to upload alone; the destructive APIs still need the
+  CDN_UPLOAD_TOKEN` (scripts, CLIs, hooks), scoped to upload alone; the destructive APIs still need the
   cookie. Every write purges the touched keys from the local POP's cache (Cache API) **and** from
   every other POP (Cloudflare's zone purge API, `CDN_PURGE_TOKEN`), so overwriting a key serves the
   new bytes immediately everywhere — see Conventions. A `scheduled` handler runs the daily sweep.
@@ -55,8 +93,9 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
   so a preview build links to itself, never to prod; see `publicUrl` in `lib/cdn.ts`).
 - **`src/card.ts`** — the 1200×630 og:image card `GET /.og/<prefix>.png` renders, drawn by
   [takumi](https://github.com/kane50613/takumi)'s WASM renderer (the one real dependency added;
-  ~1.6 MB gz total on a 10 MB paid limit — wrangler resolves the package's `workerd` export
-  condition, no config). A plain takumi node tree — no React, no JSX. Left: the explorer's
+  3.6 MB of WASM, which is still only 6% of the 64 MiB Worker cap on either plan — see
+  [`docs/DESIGN.md`](docs/DESIGN.md). Wrangler resolves the package's `workerd` export condition,
+  no config). A plain takumi node tree — no React, no JSX. Left: the explorer's
   Overview **sunburst** in miniature, drawn as concentric conic-gradient circles (no canvas):
   same 9-slot palette + design rules as `app.js` — wedges by subtree bytes (via `listSubtree`),
   tail rolled into a "smaller items" wedge, outer ring faded via `color-mix`, ring count adapting
@@ -71,9 +110,13 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
   `setPermanent`, `sweep`. Each takes the bucket (per-request `env`).
   Move/rename are copy+delete (customMetadata travels along); mutations return the keys to purge.
 - **`wrangler.jsonc`** — Worker config: R2 binding, `assets` (`run_worker_first` → the gate covers
-  them), the `cdn.ramonfabrega.com` custom-domain route, and the two non-secret `vars` the global
-  cache purge needs (`CDN_ZONE_ID`, `CDN_PUBLIC_ORIGIN`). `Env` is generated by `wrangler types`
-  (gitignored `worker-configuration.d.ts`).
+  them), preview URLs, the `Data` rule for the card fonts, and the daily sweep's cron. Deliberately
+  carries **no `routes` and no `vars`** — a template can't own a domain — and the file's comments
+  are the paste-in lines for both. `Env` is generated by `wrangler types` (gitignored
+  `worker-configuration.d.ts`), which reads `.dev.vars` for the secret names.
+- **`.dev.vars.example`** — the four secrets in dotenv. Two readers: the Deploy to Cloudflare
+  button prompts from it, and you copy it to `.dev.vars` for local dev. Descriptions for the deploy
+  dialog live in `package.json` under `cloudflare.bindings`.
 - **`public/`** — vanilla, event-delegated, zero-build UI: `index.html` + `styles.css` + `app.js`
   (separate on disk; the Worker folds them into one response). Left **folder rail** (scope by prefix)
   · flat sortable/searchable list · ⌘K search · `⋯`/right-click menus · centered modals · animated delete
@@ -102,62 +145,62 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the cdn root.
 ## Run locally
 
 ```bash
-cd cdn
 bun install
+cp .dev.vars.example .dev.vars   # then fill it in
 bun run types          # generate worker-configuration.d.ts (Env) — rerun when bindings change
 bun run dev            # wrangler dev → http://localhost:8787, local R2 sim + .dev.vars
 ```
 
-`.dev.vars` holds `CDN_PASSWORD` / `CDN_SESSION_SECRET` / `CDN_UPLOAD_TOKEN` for local dev
-(gitignored — the token also feeds `wrangler types`, so `Env` includes it). For real R2 data
-locally use `bun run dev --remote` (needs `wrangler login`).
+`.dev.vars` holds the secrets for local dev (gitignored). Copy it from `.dev.vars.example` **before**
+`bun run types`: wrangler reads the file to type `env.CDN_*`, so without it the generated `Env`
+knows about `BUCKET` and `ASSETS` and nothing else. For real R2 data locally use
+`bun run dev --remote` (needs `wrangler login`).
 
 - `bun run test` — `vitest` in workerd: `src/lib/` units, `src/storage.ts`, and the Worker routing
   (`src/worker.test.ts`, via `SELF`) against a **local Miniflare R2** (`@cloudflare/vitest-pool-workers`,
-  per-test isolation). Hermetic — no real R2, no `passage`.
+  per-test isolation). Hermetic — no real R2, no network.
 - `bun run lint` — format + lint (`biome.jsonc`); `bunx biome check --write .` to fix in place.
 - `bun run check` — exactly what CI runs (install + lint + test). Run it before pushing and a green
   build is a formality. (`bun run test`, never `bun test` — that's bun's own runner, not vitest.)
-- One tsconfig (`tsconfig.json`, Worker types covering `src/`); `bin/share` is `@ts-nocheck` Bun glue, fully self-contained (imports nothing from cdn).
+- One tsconfig (`tsconfig.json`, Worker types covering `src/`).
 
 To **ship**: branch → PR (CI lints + tests, and comments a preview URL you can click) → merge to
-`master` (CI deploys). No manual `deploy` step in the normal loop — see below.
+your production branch (CI deploys). No manual `deploy` step in the normal loop — see below.
 
 ## Deploy
 
-Live at **https://cdn.ramonfabrega.com** (Worker custom domain — the `routes` entry in
-`wrangler.jsonc`, which replaced R2's custom-domain serving on the bucket).
-
 Deploys are **automatic**, via [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/)
-— Cloudflare's own Git CI, connected to `ramonfabrega/dotfiles`. Merge to `master` and the Worker
-ships; open a PR and you get a preview URL. `bun run deploy` still works for an out-of-band push.
+— Cloudflare's own Git CI, which the Deploy button connects to your fork for you. Merge to your
+production branch and the Worker ships; open a PR and you get a preview URL. `bun run deploy` still
+works for an out-of-band push.
 
 ### CI (dashboard: Worker → Settings → Builds)
 
 The whole config lives in the Cloudflare dashboard — Workers Builds has no in-repo config file, so
-it is recorded here instead:
+what the button sets up is recorded here, both to check it and to rebuild it by hand:
 
 | Setting | Value |
 | --- | --- |
-| Root directory (“Path”) | `/cdn` |
+| Root directory (“Path”) | `/` (dashboard-relative; a subdirectory would be `/cdn`) |
 | Build command | `bun run check` |
 | Deploy command | `npx wrangler deploy` |
 | Non-production branch deploy command | `npx wrangler versions upload` |
 | Production branch | `master` |
 | Builds for non-production branches | enabled |
-| Build watch paths (include) | `cdn/*` |
+| Build watch paths (include) | — (the whole repo; see below) |
 | Build caching | enabled |
 
-Mind the two path conventions — they differ, and the dashboard doesn't say so. The **root
-directory** is dashboard-relative and leading-slashed (`/cdn`, matching Cloudflare's own
-`/workers/product-service/` example); the **watch paths** are **repo-root**-relative and bare
-(`cdn/*`). Watch paths are also the thing that makes a Worker-in-a-dotfiles-monorepo viable at all:
-commits touching `bin/`, `claude/`, or anything outside `cdn/` never trigger a build. (Cloudflare's
-`*` matches zero or more characters, `/` included, so `cdn/*` covers `cdn/src/**` too.)
+**Watch paths** matter only if you vendor this Worker into a larger repo. Mind that the two path
+conventions differ, and the dashboard doesn't say so: the **root directory** is dashboard-relative
+and leading-slashed (`/cdn`, matching Cloudflare's own `/workers/product-service/` example) while
+**watch paths** are **repo-root**-relative and bare (`cdn/*`). Set the latter and commits touching
+anything outside that subtree never trigger a build — which is what makes a Worker-in-a-monorepo
+viable at all. (Cloudflare's `*` matches zero or more characters, `/` included, so `cdn/*` covers
+`cdn/src/**` too.) A standalone fork wants neither.
 
 **`bun run check`** (`package.json`) is the whole build: `bun install --frozen-lockfile && biome
-check . && vitest run`. A red lint or a red test blocks the deploy — nothing reaches
-`cdn.ramonfabrega.com` that wouldn't pass locally. Deliberately a *script*, not a `&&` chain typed
+check . && vitest run`. A red lint or a red test blocks the deploy — nothing reaches your
+domain that wouldn't pass locally. Deliberately a *script*, not a `&&` chain typed
 into the dashboard: what CI runs is then source-controlled, reviewable in a diff, runnable verbatim
 on a laptop, and changing it never means editing the dashboard again. The dashboard holds one
 stable string; the repo holds the meaning. (`--frozen-lockfile` also fails the build on a
@@ -183,33 +226,36 @@ has no in-repo home, so it's recorded here too:
 | Browser Cache TTL | **Respect Existing Headers** |
 
 Cloudflare's default (4 hours) *overwrites* the `max-age` of any response served from cache, so the
-Worker's `max-age=0` went out as `max-age=14400` on every HIT — see Conventions.
+Worker's `max-age=0` goes out as `max-age=14400` on every HIT — see Conventions. (Only applies once
+the Worker is on a zone you own; a `workers.dev` deploy has no zone settings to get wrong.)
 
 ### Previews
 
 A PR builds a **version** rather than a deployment: uploaded, addressable, but serving no traffic.
 Cloudflare comments two URLs on the PR — a per-commit one, and a stable per-branch alias at
-`<branch>-cdn-explorer.ramonfabrega0.workers.dev` that survives further pushes to the branch. Both
-need `"preview_urls": true` in `wrangler.jsonc`: preview URLs hang off the `workers.dev` subdomain,
-which this Worker gave up when it took the custom domain, so without the flag the link resolves to
-a "preview URLs are disabled" page rather than the app. `bun run preview` uploads one by hand.
+`<branch>-<worker>.<your-subdomain>.workers.dev` that survives further pushes to the branch. Both
+need `"preview_urls": true` in `wrangler.jsonc` (it is on): preview URLs hang off the `workers.dev`
+subdomain, which a Worker **gives up when it takes a custom domain**, so once you add a `routes`
+entry the link resolves to a "preview URLs are disabled" page rather than the app unless you also
+set `"workers_dev": true`. `bun run preview` uploads one by hand.
 
 **A preview shares production's bindings.** Workers has no per-environment binding overrides, so a
-preview version talks to the *live* `cdn` R2 bucket with the *live* secrets — deliberate (an
-explorer with an empty bucket tells you nothing), but it means the delete / move / rename APIs on a
-preview URL hit real objects. The blast radius is bounded by what a version *cannot* do: it never
-answers on `cdn.ramonfabrega.com` and it never runs the cron sweep — only the deployed version
-does. The `CDN_PASSWORD` gate covers previews exactly as it covers prod.
+preview version talks to the *live* R2 bucket with the *live* secrets — deliberate (an explorer
+with an empty bucket tells you nothing), but it means the delete / move / rename APIs on a preview
+URL hit real objects. The blast radius is bounded by what a version *cannot* do: it never answers
+on your custom domain and it never runs the cron sweep — only the deployed version does. The
+`CDN_PASSWORD` gate covers previews exactly as it covers prod.
 
 ### Secrets
 
-One-time, and shared by every version incl. previews (after the first deploy, which must exist
-before secrets can be set): `wrangler secret put CDN_PASSWORD` / `CDN_SESSION_SECRET` /
-`CDN_UPLOAD_TOKEN` / `CDN_PURGE_TOKEN`. The upload token is the `share` CLI's only credential —
-store the same value in `passage` at `tokens/cdn/upload-token` (filed by app, not provider — it's a
-bearer we issue, not a CF cred).
+Four, named in `.dev.vars.example`. The Deploy to Cloudflare button prompts for them; otherwise
+they are one-time and shared by every version incl. previews: `wrangler secret put CDN_PASSWORD` /
+`CDN_SESSION_SECRET` / `CDN_UPLOAD_TOKEN` / `CDN_PURGE_TOKEN`. Setting them by hand needs a first
+deploy to exist. `CDN_UPLOAD_TOKEN` is a bearer *you* issue, not a Cloudflare credential — file it
+in your password manager alongside app tokens, not cloud ones.
 
-`CDN_PURGE_TOKEN` is the one real Cloudflare credential here, and it must be an **account-owned
+`CDN_PURGE_TOKEN` is optional, and the one real Cloudflare credential here. It must be an
+**account-owned
 token** (Manage Account → **Account API Tokens** → Create Token → Custom token), not a user token
 from My Profile. The distinction matters: a user token acts on behalf of a person and inherits a
 subset of *their* permissions, so it dies with the account membership — an account token is a
@@ -220,13 +266,24 @@ a handful of products — Page Rules, Turnstile, Registrar — still are not. Cr
 Administrator on the account.)
 
 One permission, **Zone → Cache Purge → Purge** (permission group
-`e17beae8b8cb423a99b1730f21238bed`), on **Zone: ramonfabrega.com**
-(`com.cloudflare.api.account.zone.f15a4dd4342a021564ae984134488fce`) and nothing else — so a leak
-buys an attacker a cache purge and no more. Verified: it purges the zone, and a zone-settings read
-with it is denied. Filed in `passage` at `tokens/cdn/cf-cache-purge`. The zone id and public origin
-that go with it are plain `vars` in `wrangler.jsonc`, not secrets. Absent ⇒ local-POP purge only.
+`e17beae8b8cb423a99b1730f21238bed`), scoped to **your zone** and nothing else — so a leak buys an
+attacker a cache purge and no more. Verified: it purges the zone, and a zone-settings read with it
+is denied.
 
-Two gotchas when handling it:
+The zone id and public origin that go with it are plain `vars`, not secrets — the zone id is in
+every dashboard URL and the public origin is the whole point of a CDN. They are **not** in
+`wrangler.jsonc` by default, because a fresh deploy has neither; add them once you have a domain:
+
+```jsonc
+"vars": {
+  "CDN_ZONE_ID": "<your zone id>",
+  "CDN_PUBLIC_ORIGIN": "https://cdn.example.com"
+},
+```
+
+Absent ⇒ local-POP purge only, which is a working configuration, not a broken one.
+
+Two gotchas when handling the token:
 
 - **It verifies at the account endpoint.** `GET /client/v4/user/tokens/verify` answers *"Invalid API
   Token"* for a perfectly good `cfat_` token — that route is for user tokens. Use
@@ -234,12 +291,12 @@ Two gotchas when handling it:
 - **`wrangler secret put` fails while a preview version is the latest.** Every PR makes Workers
   Builds `versions upload`, and wrangler then refuses to edit secrets ("the latest version of your
   Worker isn't currently deployed") rather than silently promote that preview. Merge first, let the
-  master build deploy, *then* put the secret. Don't work around it with `wrangler versions secret
+  production build deploy, *then* put the secret. Don't work around it with `wrangler versions secret
   put` — that makes a hand-uploaded version the latest again and you hit the same guard next merge.
 
 ## Conventions
 
-- Namespace by project (`cuanto/`, `test/`, …). Empty folders = a hidden `.keep` marker.
+- Namespace by project (`myapp/`, `screenshots/`, …). Empty folders = a hidden `.keep` marker.
 - Classify by **key extension only** (no content-type inference) — the CLI guarantees extensions.
 - **Content-type is derived from the key on write *and* on serve** (`mimeFor`, `src/lib/cdn.ts`).
   Deriving again at serve time is a no-op for anything we stored — the upload already ignores the
@@ -257,7 +314,7 @@ Two gotchas when handling it:
 - **Expiry** lives in the Worker, not R2: a daily cron (`triggers.crons`) runs `sweep()`, deleting
   objects >30 days after upload **unless flagged `permanent`** (R2 customMetadata). The bucket's
   old blanket 30d lifecycle rule is gone (R2 rules are prefix-only — no per-object exemptions);
-  only the multipart-abort rule remains on the bucket. Flag at upload (`share … --permanent`,
+  only the multipart-abort rule remains on the bucket. Flag at upload (`?permanent=1` on the write,
   `?permanent=1`) or toggle in the UI (∞ badge, `is:permanent` search); overwrites keep the flag.
 - **Caching**: one policy for every key — `max-age=0, s-maxage=3600`. Browsers revalidate each
   view (If-None-Match → a cheap 304; the edge answers conditionals even on cache hits) while each
@@ -283,7 +340,7 @@ Two gotchas when handling it:
   a HIT must still say `max-age=0`. (Sparkle happens to be immune: `SPUDownloadDriver` fetches the
   appcast with `NSURLRequestReloadIgnoringLocalCacheData`. Browsers are not.)
 - **Mutate through the Worker, not around it.** The cache purge lives in the Worker, so it only
-  fires for writes that go through it (`/api/*`, the explorer, `share`). Delete an object with
+  fires for writes that go through it (`/api/*`, the explorer, any uploader). Delete an object with
   `wrangler r2 object delete` or the R2 dashboard and the bytes vanish from R2 while the **public
   URL keeps serving a cached copy for up to an hour** — the folder page 404s but the object still
   200s, which looks like a ghost. Verified: same key with a `?cb=1` cache-buster 404s immediately.
@@ -292,16 +349,14 @@ Two gotchas when handling it:
 
 ## Remaining
 
-The S3 era is fully retired: the `r2-cdn` R2 token is revoked and its two `passage` secrets are
-gone, so `CDN_UPLOAD_TOKEN` (`tokens/cdn/upload-token`) is the only credential that touches the
-bucket, and the Worker is the only thing that writes to it. The dev fixtures are cleared too —
-`test/` is empty, and the bucket now holds only real work product (`cuanto/` — do **not** wipe it).
-
 Nice-to-haves, not blockers: prefix-scoped TTLs (e.g. an ephemeral `24h/` namespace), a
-multi-select bulk bar. mux's Sparkle artifacts (`mux/appcast.xml`, `mux/MuxMac-latest.zip`) had
-already been eaten by the old blanket 30d rule — the next mux release must publish them with
-`share … --permanent` (flag needed once per key; it sticks across later overwrites), after which
-an installed app updating after a months-long release gap still finds them.
+multi-select bulk bar.
+
+One operational note worth inheriting, learned the hard way on the instance this was extracted
+from: **anything an installed app fetches on its own schedule must be uploaded `permanent`.** A
+Sparkle appcast and its `*-latest.zip` sat untouched past the 30-day sweep and were deleted, so
+copies of the app that hadn't checked in for months had nothing to update from. The flag is needed
+once per key and sticks across later overwrites — set it on the first publish, not after.
 
 ## Open threads
 
@@ -321,7 +376,7 @@ these are *decisions/features not yet made*, distinct from the operational clean
    text/hrefs do). Gated on thread 2.
 
 2. **What's really public — and should roots be un-guessable?** The CDN is public by construction:
-   anyone with `cuanto/foo/1.png` can walk `cuanto/` and every prefix below it via the folder
+   anyone with `myapp/foo/1.png` can walk `myapp/` and every prefix below it via the folder
    pages (siblings + children are listed one level at a time). Top-level roots are only *semi*
    -invisible (guessable, not secret). Open question before shipping the JSON manifest — which
    makes enumeration trivial, i.e. effectively publishes a sitemap: decide what should be
@@ -345,7 +400,7 @@ these are *decisions/features not yet made*, distinct from the operational clean
    - **Rendering is transformative.** A pretty `.md` view means what a human sees at the URL is *not*
      the file — generated HTML replaced `text/plain` bytes. That collides with the contract at the
      top of this file (*"every other path streams the matching R2 object … range-capable"*) and with
-     what a `share` link is understood to be. So rendering is not "a bigger preview"; it's a
+     what a CDN link is understood to be. So rendering is not "a bigger preview"; it's a
      different question with a different blast radius.
 
    **The mechanism constraint that shapes the option space:** a raw non-HTML file has no `<head>`, so
@@ -361,7 +416,7 @@ these are *decisions/features not yet made*, distinct from the operational clean
    commitment): a **sibling URL** (`?view`, or a `/view/` route) leaving the canonical URL byte-exact;
    **content-negotiating the canonical URL** (`Sec-Fetch-Mode: navigate` → rendered, curl/Range → raw
    — elegant, but one-URL-two-representations, needs `Vary`/cache care, and surprises agents, cf.
-   thread 1's finding about what survives markdown conversion); or **flipping what `share` hands out**
+   thread 1's finding about what survives markdown conversion); or **flipping what an uploader hands out**
    for renderable types, which changes the CLI's contract, not just the Worker's.
 
    For **html** specifically there's a fidelity ceiling worth recording: takumi is a fixed-node-tree
