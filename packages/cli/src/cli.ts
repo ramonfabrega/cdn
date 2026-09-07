@@ -391,11 +391,19 @@ cli.command("setup", {
     dryRun: z.boolean().optional().describe("Say what would happen and change nothing"),
     config: z.string().optional().describe("Path to wrangler.jsonc (default: ./wrangler.jsonc)"),
   }),
+  // HOME and XDG_CONFIG_HOME are declared because this command can WRITE a
+  // credential: the generated upload token lands in the hosts file, and a
+  // command that writes one should not reach around its own declared inputs to
+  // decide where. The lesson is paid for — an earlier partial seam let a test
+  // touch the real ~/.config, and a partial env seam is worse than none because
+  // it looks total.
   env: z.object({
     CLOUDFLARE_API_TOKEN: z
       .string()
       .optional()
       .describe("The broad setup token. Read from the environment only — never written anywhere"),
+    XDG_CONFIG_HOME: z.string().optional().describe("Where host files live; defaults to ~/.config"),
+    HOME: z.string().optional().describe("Used to locate ~/.config when XDG_CONFIG_HOME is unset"),
   }),
   output: z.object({
     domain: z.string(),
@@ -467,6 +475,7 @@ cli.command("setup", {
       cf: { token, ...(dryRun ? { fetch: readOnlyFetch() } : {}) },
       run: dryRun ? recordingRunner(commands) : runCommand,
       commands,
+      storeToken: (host, token) => writeHostFile(host, token, c.env),
       readFile: (p) => Bun.file(p).text(),
       writeFile: (p, text) => Bun.write(p, text).then(() => undefined),
     });

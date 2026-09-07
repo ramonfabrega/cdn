@@ -28,15 +28,83 @@ export const runCommand: Runner = async ({ argv, input }) => {
   return { code, stdout, stderr };
 };
 
-/** The dry-run one: records and answers success without doing anything. The
-    recorded list is what gets printed, so what you read is literally what would
-    have run. */
-export const recordingRunner = (log: Command[]): Runner => {
+/**
+ * Commands a dry run still REALLY runs, matched by prefix.
+ *
+ * Exactly the principle `readOnlyFetch` applies to the API: reads go through,
+ * writes stop. A dry run whose reads were faked could only describe a
+ * hypothetical Worker — it could not tell you that `CDN_UPLOAD_TOKEN` is already
+ * set, and "would generate a token" is a lie on an instance that has one.
+ *
+ * An allowlist rather than a guess at which verbs mutate: `wrangler secret list`
+ * is a read, `wrangler secret put` is not, and the difference is worth spelling
+ * out rather than inferring from the word "list".
+ */
+const READ_ONLY: string[][] = [
+  ["wrangler", "secret", "list"],
+  ["wrangler", "whoami"],
+];
+
+const isReadOnly = (argv: string[]) =>
+  READ_ONLY.some((prefix) => prefix.every((word, i) => argv[i] === word));
+
+/** The dry-run one: reads pass through to `inner`, writes are recorded and
+    answered with success. The recorded list is what gets printed, so what you
+    read is literally what would have run. `inner` is injectable so a test can
+    dry-run without a wrangler on the machine. */
+export const recordingRunner = (log: Command[], inner: Runner = runCommand): Runner => {
   return (cmd) => {
+    if (isReadOnly(cmd.argv)) return inner(cmd);
     log.push(cmd);
     return Promise.resolve({ code: 0, stdout: "", stderr: "" });
   };
 };
+
+/**
+ * The names of the Worker's secrets. Names only — `wrangler secret list` cannot
+ * print values, which is exactly the property that makes this check safe to run
+ * and safe to log.
+ *
+ * Used to decide whether a credential already exists. That question has to be
+ * answered before generating one, because overwriting `CDN_UPLOAD_TOKEN` would
+ * silently break every writer already using it: the hooks, the CLI on another
+ * machine, the Shortcut. Setup can create a missing credential; it must never
+ * replace a working one.
+ */
+export async function secretNames(
+  run: Runner
+): Promise<{ ok: true; names: string[] } | { ok: false; error: string }> {
+  const res = await run({ argv: ["wrangler", "secret", "list", "--format", "json"] });
+  if (res.code !== 0) {
+    return {
+      ok: false,
+      error: `\`wrangler secret list\` exited ${res.code}: ${res.stderr.trim().slice(0, 200)}`,
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout);
+  } catch {
+    return { ok: false, error: "could not read `wrangler secret list` output as JSON" };
+  }
+  const names = (Array.isArray(parsed) ? parsed : [])
+    .map((entry) => Reflect.get(Object(entry), "name"))
+    .filter((name): name is string => typeof name === "string");
+  return { ok: true, names };
+}
+
+/**
+ * A new machine credential: 32 bytes from the CSPRNG, hex.
+ *
+ * The same thing `openssl rand -hex 32` produces, generated here so that nobody
+ * has to leave the flow to make one. That is not a convenience — asking a person
+ * for high-entropy input is how a template ends up deployed with the placeholder
+ * still in the box.
+ */
+export const newSecret = (): string =>
+  Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) =>
+    b.toString(16).padStart(2, "0")
+  ).join("");
 
 // ── wrangler.jsonc ───────────────────────────────────────────────────────────
 // Edited as TEXT, not parsed and re-serialized. The file is mostly comments —

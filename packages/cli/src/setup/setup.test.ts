@@ -10,7 +10,7 @@ import { describe, expect, test } from "bun:test";
 
 import { readOnlyFetch } from "../cloudflare.ts";
 import { runSetup, type SetupReport } from "./index.ts";
-import { type Command, recordingRunner, runCommand } from "./wrangler.ts";
+import { type Command, type Runner, recordingRunner, runCommand } from "./wrangler.ts";
 
 const ACCOUNT = "acc123";
 const ZONE = { id: "zone123", name: "example.com" };
@@ -44,6 +44,11 @@ type World = {
   workers?: { id: string; name: string }[];
   organization?: { auth_domain: string; name: string };
   writes: { method: string; url: string; body: unknown }[];
+  /** What `wrangler secret list` answers. */
+  secrets: string[];
+  /** What the hosts file ended up holding, if anything. Never a real path — the
+      writer is injected precisely so a test cannot reach ~/.config. */
+  stored?: { host: string; token: string };
 };
 
 const emptyWorld = (): World => ({
@@ -54,6 +59,7 @@ const emptyWorld = (): World => ({
   workers: [{ id: WORKER_ID, name: "cdn-explorer" }],
   organization: { auth_domain: "acme.cloudflareaccess.com", name: "Acme" },
   writes: [],
+  secrets: [],
 });
 
 /** A Cloudflare, in memory. Answers the shapes the docs showed, including the
@@ -170,11 +176,32 @@ const baseOptions = (o: { world: World; fetch: typeof globalThis.fetch }) => ({
   configPath: "wrangler.jsonc",
   accountId: ACCOUNT,
   cf: { token: "setup-token", fetch: o.fetch },
-  run: () => Promise.resolve({ code: 0, stdout: "", stderr: "" }),
+  run: wrangler(o.world, []),
   commands: [],
+  storeToken: () => Promise.resolve({ ok: true as const, file: "/fake/hosts.env" }),
   readFile: () => Promise.resolve(TEMPLATE),
   writeFile: () => Promise.resolve(),
 });
+
+/** A wrangler, in memory. Only the READ has to answer anything real — that is
+    the half a dry run still runs. */
+const wrangler = (world: World, ranForReal: Command[]): Runner => {
+  return (cmd) => {
+    const argv = cmd.argv.join(" ");
+    if (argv.startsWith("wrangler secret list")) {
+      return Promise.resolve({
+        code: 0,
+        stdout: JSON.stringify(world.secrets.map((name) => ({ name, type: "secret_text" }))),
+        stderr: "",
+      });
+    }
+    ranForReal.push(cmd);
+    if (cmd.argv[1] === "secret" && cmd.argv[2] === "put" && cmd.argv[3]) {
+      world.secrets.push(cmd.argv[3]);
+    }
+    return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+  };
+};
 
 const run = async (options: RunOptions = {}) => {
   const world = options.world ?? emptyWorld();
@@ -183,6 +210,7 @@ const run = async (options: RunOptions = {}) => {
   const commands: Command[] = [];
   const ranForReal: Command[] = [];
   const inner = cloudflare(world);
+  const real = wrangler(world, ranForReal);
 
   const report = await runSetup({
     domain: DOMAIN,
@@ -192,13 +220,14 @@ const run = async (options: RunOptions = {}) => {
     configPath: "wrangler.jsonc",
     accountId: ACCOUNT,
     cf: { token: "setup-token", fetch: dryRun ? readOnlyFetch([], inner) : inner },
-    run: dryRun
-      ? recordingRunner(commands)
-      : (cmd) => {
-          ranForReal.push(cmd);
-          return Promise.resolve({ code: 0, stdout: "", stderr: "" });
-        },
+    // Dry: writes recorded, reads passed through to the same fake wrangler the
+    // real run uses — so `secret list` answers truthfully in both modes.
+    run: dryRun ? recordingRunner(commands, real) : real,
     commands,
+    storeToken: (host, token) => {
+      world.stored = { host, token };
+      return Promise.resolve({ ok: true as const, file: `/fake/config/cdn/hosts/${host}.env` });
+    },
     readFile: (p) => {
       const text = files.get(p);
       return text === undefined ? Promise.reject(new Error("no such file")) : Promise.resolve(text);
@@ -224,6 +253,7 @@ describe("cdn setup, first run", () => {
       "browser cache TTL": "created",
       "purge token": "created",
       "purge vars": "created",
+      "upload token": "created",
       access: "skipped",
     });
 
@@ -249,7 +279,9 @@ describe("cdn setup, first run", () => {
 
     // The secret went in over stdin, not as an argument — an argument would put
     // it in a process list.
-    const put = ranForReal.find((c) => c.argv.includes("secret"));
+    // Named explicitly: setup now sets two secrets, and "the first one that
+    // mentions `secret`" would quietly become whichever step runs first.
+    const put = ranForReal.find((c) => c.argv.includes("CDN_PURGE_TOKEN"));
     expect(put?.argv).toEqual(["wrangler", "secret", "put", "CDN_PURGE_TOKEN"]);
     expect(put?.input).toBe("cfat_secret");
     expect(ranForReal.some((c) => c.argv.join(" ") === "wrangler deploy")).toBe(true);
@@ -266,6 +298,7 @@ describe("cdn setup, first run", () => {
       "browser cache TTL": "skipped",
       "purge token": "skipped",
       "purge vars": "skipped",
+      "upload token": "skipped",
       access: "skipped",
     });
     // Nothing written: not the config, not the account.
@@ -293,6 +326,7 @@ describe("idempotence", () => {
       "browser cache TTL": "present",
       "purge token": "present",
       "purge vars": "present",
+      "upload token": "present",
       access: "skipped",
     });
     expect(second.world.writes).toEqual([]);
@@ -372,6 +406,70 @@ describe("browser cache TTL", () => {
     expect(step?.verdict).toBe("failed");
     expect(step?.detail).toContain("Zone Settings Write");
     expect(step?.detail).toContain("by hand");
+  });
+});
+
+describe("upload token", () => {
+  // The credential every writer uses. Generated rather than asked for: 32 bytes
+  // of hex is not something to put in front of a person, and a flow that does it
+  // anyway gets a placeholder typed into it.
+  test("is generated, set as a secret, and stored for this machine", async () => {
+    const { report, world, ranForReal } = await run();
+    const step = report.steps.find((s) => s.step === "upload token");
+    expect(step?.verdict).toBe("created");
+
+    const put = ranForReal.find((c) => c.argv.includes("CDN_UPLOAD_TOKEN"));
+    expect(put?.argv).toEqual(["wrangler", "secret", "put", "CDN_UPLOAD_TOKEN"]);
+    // Over stdin, never an argument — an argument is in the process list.
+    expect(put?.input).toMatch(/^[0-9a-f]{64}$/);
+
+    // The same token reached the hosts file, so the CLI works immediately.
+    expect(world.stored?.host).toBe(DOMAIN);
+    expect(world.stored?.token).toBe(put?.input);
+  });
+
+  // The one that matters: an existing token belongs to writers on machines that
+  // are not this one, and replacing it breaks all of them at once, silently.
+  test("an existing secret is never replaced", async () => {
+    const world = { ...emptyWorld(), secrets: ["CDN_UPLOAD_TOKEN"] };
+    const { report, world: after, ranForReal } = await run({ world });
+    expect(verdicts(report)["upload token"]).toBe("present");
+    expect(report.steps.find((s) => s.step === "upload token")?.detail).toContain("cdn auth login");
+    expect(ranForReal.some((c) => c.argv.includes("CDN_UPLOAD_TOKEN"))).toBe(false);
+    expect(after.stored).toBeUndefined();
+  });
+
+  // --dry-run READS for real here too, which is the whole point: on an instance
+  // that already has a token it must say `present`, not "would generate one".
+  test("--dry-run sees an existing token rather than promising a new one", async () => {
+    const world = { ...emptyWorld(), secrets: ["CDN_UPLOAD_TOKEN"] };
+    const { report, world: after } = await run({ dryRun: true, world });
+    expect(verdicts(report)["upload token"]).toBe("present");
+    expect(after.stored).toBeUndefined();
+  });
+
+  test("--dry-run on a fresh Worker promises one and writes nothing", async () => {
+    const { report, world, commands } = await run({ dryRun: true });
+    expect(verdicts(report)["upload token"]).toBe("skipped");
+    expect(world.stored).toBeUndefined();
+    expect(world.secrets).toEqual([]);
+    expect(commands.some((c) => c.argv.includes("CDN_UPLOAD_TOKEN"))).toBe(false);
+  });
+
+  test("a token set on the Worker but not stored locally fails loudly", async () => {
+    const world = emptyWorld();
+    const files = new Map<string, string>([["wrangler.jsonc", TEMPLATE]]);
+    const report = await runSetup({
+      ...baseOptions({ world, fetch: cloudflare(world) }),
+      storeToken: () => Promise.resolve({ ok: false as const, error: "ended up mode 644" }),
+      readFile: (p: string) => Promise.resolve(files.get(p) ?? TEMPLATE),
+      writeFile: () => Promise.resolve(),
+    });
+    const step = report.steps.find((s) => s.step === "upload token");
+    expect(step?.verdict).toBe("failed");
+    // The secret IS set, and it is only shown once — say what to do about that.
+    expect(step?.detail).toContain("only shown once");
+    expect(step?.detail).toContain("ended up mode 644");
   });
 });
 

@@ -31,8 +31,10 @@ import {
   type Command,
   hasRoute,
   hasVar,
+  newSecret,
   type Runner,
   routePatterns,
+  secretNames,
   workerName,
 } from "./wrangler.ts";
 import {
@@ -74,6 +76,13 @@ export type SetupOptions = {
   run: Runner;
   /** Recorded when dry — printed as "what would have happened". */
   commands: Command[];
+  /** Where a generated upload token goes on THIS machine. Injected for the same
+      reason `fetch` is: a test must not be able to reach ~/.config, and this
+      one writes a credential. */
+  storeToken: (
+    host: string,
+    token: string
+  ) => Promise<{ ok: true; file: string } | { ok: false; error: string }>;
   readFile: (path: string) => Promise<string>;
   writeFile: (path: string, text: string) => Promise<void>;
 };
@@ -291,6 +300,72 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
     } else {
       await options.writeFile(configPath, edited.config);
       steps.push(step("purge vars", "created", "added to wrangler.jsonc — deploy to apply"));
+    }
+  }
+
+  // ── c3. the upload token ───────────────────────────────────────────────────
+  // The credential every writer uses — the CLI, both hooks, the Shortcut. The
+  // Worker ships without one on purpose (no token configured ⇒ every bearer is
+  // rejected, so a fresh CDN has no write path rather than a guessable one), and
+  // this is where it comes into existence.
+  //
+  // Generated here rather than asked for: 32 bytes of hex is not something to
+  // put in front of a person, and a flow that does gets a placeholder typed into
+  // it. Existing tokens are NEVER replaced — overwriting this one would break
+  // every writer already using it, silently, on machines that are not this one.
+  const secrets = await secretNames(run);
+  if (!secrets.ok) {
+    steps.push(step("upload token", "failed", secrets.error));
+  } else if (secrets.names.includes("CDN_UPLOAD_TOKEN")) {
+    steps.push(
+      step(
+        "upload token",
+        "present",
+        "CDN_UPLOAD_TOKEN is already set — left alone, because replacing it would break every writer using it. Run `cdn auth login` if this machine needs a copy."
+      )
+    );
+  } else if (dryRun) {
+    steps.push(
+      step(
+        "upload token",
+        "skipped",
+        `would generate a token, set it as the CDN_UPLOAD_TOKEN secret, and store it for ${domain} so the CLI and hooks work without a second step`
+      )
+    );
+  } else {
+    const token = newSecret();
+    const put = await run({
+      argv: ["wrangler", "secret", "put", "CDN_UPLOAD_TOKEN"],
+      input: token,
+    });
+    if (put.code !== 0) {
+      steps.push(
+        step(
+          "upload token",
+          "failed",
+          `\`wrangler secret put CDN_UPLOAD_TOKEN\` exited ${put.code}: ${put.stderr.trim().slice(0, 200)}`
+        )
+      );
+    } else {
+      // Stored unverified, deliberately. `cdn auth login` verifies before it
+      // writes because it is handed a token someone else made; this one was
+      // generated here and set from here, so the only thing a check could tell
+      // us is whether DNS has propagated yet — which is not a reason to withhold
+      // a credential we know is correct.
+      const stored = await options.storeToken(domain, token);
+      steps.push(
+        stored.ok
+          ? step(
+              "upload token",
+              "created",
+              `generated, stored as the CDN_UPLOAD_TOKEN secret, and written to ${stored.file} — the CLI and the hooks can write to ${domain} now`
+            )
+          : step(
+              "upload token",
+              "failed",
+              `the secret is set on the Worker, but storing it locally failed: ${stored.error}. It is only shown once — run \`cdn setup\` again after deleting the CDN_UPLOAD_TOKEN secret, or set one by hand with \`cdn auth login\`.`
+            )
+      );
     }
   }
 

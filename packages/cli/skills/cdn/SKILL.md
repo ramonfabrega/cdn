@@ -91,6 +91,8 @@ Do the post-deploy checklist: custom domain, purge token, and optionally Access
 | Name | Type | Required | Default | Description |
 |------|------|----------|---------|-------------|
 | `CLOUDFLARE_API_TOKEN` | `string` | no |  | The broad setup token. Read from the environment only — never written anywhere |
+| `XDG_CONFIG_HOME` | `string` | no |  | Where host files live; defaults to ~/.config |
+| `HOME` | `string` | no |  | Used to locate ~/.config when XDG_CONFIG_HOME is unset |
 
 #### Options
 

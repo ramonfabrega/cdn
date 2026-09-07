@@ -4,6 +4,51 @@ Why things are the way they are. `CLAUDE.md` carries what every session needs;
 this file carries the decisions that were arguable, with the evidence that
 settled them. Newest first.
 
+## Setup generates the credential it used to ask for (2026-09-07)
+
+`CDN_UPLOAD_TOKEN` is the bearer every writer uses — the CLI, both hooks, the
+Shortcut. It used to be a thing you produced (`openssl rand -hex 32`), pasted
+into a deploy dialog, and then pasted again into `cdn auth login`. Now setup
+generates it, sets it, and stores it, and the two paste steps are gone.
+
+That is the same argument as the deploy dialog one above, applied one layer
+along: **asking a person for high-entropy input is a design smell, not a
+security measure.** The value has no meaning to anybody — it is not chosen, not
+remembered, not typed twice. Every place that asks for one is a place a
+placeholder gets left behind.
+
+**Never replacing an existing token is the load-bearing half.** Setup is
+idempotent, so this step runs again on every re-run, and a token that already
+exists is a token some other machine is already using — a hook on a laptop, a
+Shortcut on a phone, a CI job. Overwriting it breaks all of them at once, and
+breaks them silently: uploads start 401ing somewhere nobody is watching. So the
+step reads `wrangler secret list` first, and an existing `CDN_UPLOAD_TOKEN` is
+`present` with a pointer to `cdn auth login` for a machine that needs a copy.
+Setup may create a missing credential. It may not replace a working one.
+
+**Which forced the dry run to grow the same seam the API client already had.**
+`recordingRunner` used to fake every command, so a dry run could not tell you
+that `CDN_UPLOAD_TOKEN` already exists — it would promise to generate one on an
+instance that has one, which is exactly the dry-run lie `readOnlyFetch` was
+built to avoid. Reads now pass through to the real runner and writes are still
+recorded. The read/write split is an explicit allowlist (`wrangler secret list`,
+`wrangler whoami`) rather than a guess from the verb, because `secret list` and
+`secret put` differ by one word and by everything.
+
+**Stored unverified, on purpose, and that is a departure worth naming.**
+`cdn auth login` verifies a token against `GET /api/auth` before writing it to
+disk, because it is handed a token somebody else made and a wrong one on disk is
+a confusing failure later. This token was generated here and set from here, so
+the only thing a check could establish is whether DNS has propagated to the
+custom domain setup may have created ninety seconds ago. That is not a reason to
+withhold a credential we know is correct.
+
+The one real failure mode is covered: if the secret lands on the Worker but the
+local write fails — the mode check in `writeHostFile` refusing to leave a
+world-readable token, say — the step fails loudly and says the secret is only
+shown once, because at that point the value is genuinely gone and the fix is to
+delete the secret and re-run rather than to hunt for it.
+
 ## One field, and the two ways that went wrong (2026-09-07)
 
 Found by pressing the button. The first real run of this template through the
