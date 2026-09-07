@@ -25,6 +25,7 @@ import {
   type WorkerRef,
   workerApp,
 } from "./access.ts";
+import { putSecret, secretNames } from "./workers.ts";
 import {
   addPurgeVars,
   addRoute,
@@ -34,7 +35,6 @@ import {
   newSecret,
   type Runner,
   routePatterns,
-  secretNames,
   workerName,
 } from "./wrangler.ts";
 import {
@@ -71,7 +71,9 @@ export type SetupOptions = {
   accessHostname: boolean;
   dryRun: boolean;
   configPath: string;
-  /** Read from `wrangler whoami`, never asked for. */
+  /** Resolved from the TOKEN (`resolveAccount`), never asked for — and no longer
+      from `wrangler whoami`, which described a different credential than the one
+      the run would actually use. */
   accountId: string;
   cf: CloudflareOptions;
   run: Runner;
@@ -133,6 +135,13 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
     steps.push(step("wrangler.jsonc", "failed", `could not read ${configPath}`));
     return report;
   }
+
+  // Which Worker this is. Read once, up here, because the secret steps address
+  // it by name over the API — the account/script pair IS the address, where
+  // `wrangler secret put` used to infer it from the working directory. Inferring
+  // it was its own quiet hazard: run setup from the wrong checkout and it
+  // configured whichever Worker that config named.
+  const script = workerName(config);
 
   // ── the zone ───────────────────────────────────────────────────────────────
   // Everything below needs it, and not finding it is the honest end of the run:
@@ -257,22 +266,21 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
         // perfectly good cfat_ token, which is the most confusing thing about
         // account-owned tokens.
         const check = await verifyToken({ ...cf, token: minted.result.value }, accountId);
-        const put = await run({
-          argv: ["wrangler", "secret", "put", "CDN_PURGE_TOKEN"],
-          input: minted.result.value,
-        });
+        const put = script
+          ? await putSecret(cf, accountId, script, "CDN_PURGE_TOKEN", minted.result.value)
+          : { ok: false as const, error: `${configPath} names no Worker to set the secret on` };
         steps.push(
-          check.ok && put.code === 0
+          check.ok && put.ok
             ? step(
                 "purge token",
                 "created",
-                `minted, verified, and stored as the CDN_PURGE_TOKEN secret`
+                `minted, verified, and stored as the CDN_PURGE_TOKEN secret on ${script}`
               )
             : step(
                 "purge token",
                 "failed",
                 check.ok
-                  ? `minted and verified, but \`wrangler secret put\` exited ${put.code} — the secret is only shown once, so delete the token and re-run`
+                  ? `minted and verified, but setting the CDN_PURGE_TOKEN secret failed: ${put.ok ? "" : put.error} — the value is only shown once, so delete the token and re-run`
                   : `minted but did not verify: ${check.ok ? "" : check.error}`
               )
         );
@@ -314,10 +322,12 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
   // put in front of a person, and a flow that does gets a placeholder typed into
   // it. Existing tokens are NEVER replaced — overwriting this one would break
   // every writer already using it, silently, on machines that are not this one.
-  const secrets = await secretNames(run);
+  const secrets = script
+    ? await secretNames(cf, accountId, script)
+    : { ok: false as const, error: `${configPath} names no Worker to read secrets from` };
   if (!secrets.ok) {
     steps.push(step("upload token", "failed", secrets.error));
-  } else if (secrets.names.includes("CDN_UPLOAD_TOKEN")) {
+  } else if (secrets.result.includes("CDN_UPLOAD_TOKEN")) {
     steps.push(
       step(
         "upload token",
@@ -335,17 +345,12 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
     );
   } else {
     const token = newSecret();
-    const put = await run({
-      argv: ["wrangler", "secret", "put", "CDN_UPLOAD_TOKEN"],
-      input: token,
-    });
-    if (put.code !== 0) {
+    const put = script
+      ? await putSecret(cf, accountId, script, "CDN_UPLOAD_TOKEN", token)
+      : { ok: false as const, error: `${configPath} names no Worker to set the secret on` };
+    if (!put.ok) {
       steps.push(
-        step(
-          "upload token",
-          "failed",
-          `\`wrangler secret put CDN_UPLOAD_TOKEN\` exited ${put.code}: ${put.stderr.trim().slice(0, 200)}`
-        )
+        step("upload token", "failed", `setting the CDN_UPLOAD_TOKEN secret failed: ${put.error}`)
       );
     } else {
       // Stored unverified, deliberately. `cdn auth login` verifies before it
@@ -404,7 +409,6 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
       // application is still the thing setup has always made, and it still
       // works. What changes is that the preview URLs stay outside it, so the
       // step says so rather than reporting the same sentence either way.
-      const script = workerName(config);
       let worker: WorkerRef | undefined;
       let instead = "";
       if (options.accessHostname) {

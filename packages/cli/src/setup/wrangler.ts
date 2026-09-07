@@ -36,14 +36,18 @@ export const runCommand: Runner = async ({ argv, input }) => {
  * hypothetical Worker — it could not tell you that `CDN_UPLOAD_TOKEN` is already
  * set, and "would generate a token" is a lie on an instance that has one.
  *
- * An allowlist rather than a guess at which verbs mutate: `wrangler secret list`
- * is a read, `wrangler secret put` is not, and the difference is worth spelling
- * out rather than inferring from the word "list".
+ * EMPTY, and that is the current answer rather than an oversight. It used to
+ * hold `wrangler secret list` and `wrangler whoami`; both moved to the API (see
+ * `workers.ts` for why), and `wrangler deploy` — the only shell-out left — is a
+ * write. So every read a dry run needs now goes through `readOnlyFetch`, which
+ * is the same principle applied in one place instead of two.
+ *
+ * Kept rather than deleted: the allowlist is how this stays honest if a read
+ * command ever comes back, and an allowlist is the right shape for the question
+ * — `wrangler secret list` is a read and `wrangler secret put` is not, and that
+ * is worth spelling out rather than inferring from the word "list".
  */
-const READ_ONLY: string[][] = [
-  ["wrangler", "secret", "list"],
-  ["wrangler", "whoami"],
-];
+const READ_ONLY: string[][] = [];
 
 const isReadOnly = (argv: string[]) =>
   READ_ONLY.some((prefix) => prefix.every((word, i) => argv[i] === word));
@@ -59,39 +63,6 @@ export const recordingRunner = (log: Command[], inner: Runner = runCommand): Run
     return Promise.resolve({ code: 0, stdout: "", stderr: "" });
   };
 };
-
-/**
- * The names of the Worker's secrets. Names only — `wrangler secret list` cannot
- * print values, which is exactly the property that makes this check safe to run
- * and safe to log.
- *
- * Used to decide whether a credential already exists. That question has to be
- * answered before generating one, because overwriting `CDN_UPLOAD_TOKEN` would
- * silently break every writer already using it: the hooks, the CLI on another
- * machine, the Shortcut. Setup can create a missing credential; it must never
- * replace a working one.
- */
-export async function secretNames(
-  run: Runner
-): Promise<{ ok: true; names: string[] } | { ok: false; error: string }> {
-  const res = await run({ argv: ["wrangler", "secret", "list", "--format", "json"] });
-  if (res.code !== 0) {
-    return {
-      ok: false,
-      error: `\`wrangler secret list\` exited ${res.code}: ${res.stderr.trim().slice(0, 200)}`,
-    };
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(res.stdout);
-  } catch {
-    return { ok: false, error: "could not read `wrangler secret list` output as JSON" };
-  }
-  const names = (Array.isArray(parsed) ? parsed : [])
-    .map((entry) => Reflect.get(Object(entry), "name"))
-    .filter((name): name is string => typeof name === "string");
-  return { ok: true, names };
-}
 
 /**
  * A new machine credential: 32 bytes from the CSPRNG, hex.
@@ -200,17 +171,6 @@ export const addPurgeVars = (
     which the tree already knows. Read as text for the same reason as above. */
 export const workerName = (config: string): string | undefined =>
   /^\s*"name"\s*:\s*"([^"]+)"/m.exec(config)?.[1];
-
-/**
- * The account id, from `wrangler whoami`. Not asked for: the tree and the
- * logged-in session between them already know it, and a setup command that
- * interrogates you about things it can look up is a worse setup command.
- */
-export const accountIdFrom = (whoami: string): string | undefined => {
-  // wrangler prints a table; the id is the only 32-hex field in it.
-  const ids = [...whoami.matchAll(/\b([0-9a-f]{32})\b/g)].map((m) => m[1] ?? "");
-  return ids[0];
-};
 
 /**
  * The suffixes of a hostname that could be a zone, most specific first:

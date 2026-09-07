@@ -28,7 +28,8 @@ import { hostsDir, listHosts, resolveTarget } from "./hosts.ts";
 import { humanSize, keyForFile, keyInDir, prefixForDir, walk } from "./keys.ts";
 import { writeHostFile } from "./login.ts";
 import { runSetup } from "./setup/index.ts";
-import { accountIdFrom, type Command, recordingRunner, runCommand } from "./setup/wrangler.ts";
+import { resolveAccount } from "./setup/workers.ts";
+import { type Command, recordingRunner, runCommand } from "./setup/wrangler.ts";
 import { upload, verify } from "./upload.ts";
 
 // The CLI's whole environment, declared. The two CDN_* vars are the documented
@@ -450,21 +451,25 @@ cli.command("setup", {
     }
 
     const configPath = c.options.config ?? "wrangler.jsonc";
-    // The account id comes from the session, not from you. `--json` is the
-    // documented structured form; the id is 32 hex either way, so one regex
-    // reads both and there is no second parser to keep true.
-    const whoami = await runCommand({ argv: ["wrangler", "whoami", "--json"] });
-    const accountId = accountIdFrom(`${whoami.stdout}\n${whoami.stderr}`);
-    if (!accountId) {
+    const dryRun = c.options.dryRun === true;
+    const cf = { token, ...(dryRun ? { fetch: readOnlyFetch() } : {}) };
+
+    // The account id comes from the TOKEN, not from `wrangler whoami`. Those two
+    // were allowed to disagree, and when they did every verdict in the report
+    // described the wrong account — setup would check one account's zone while
+    // its wrangler wrote to another's Worker. Asking the credential who it is
+    // removes the disagreement instead of arbitrating it.
+    const account = await resolveAccount(cf);
+    if (!account.ok) {
       return c.error({
-        code: "NOT_LOGGED_IN",
-        message: "could not read an account id from `wrangler whoami` — run `wrangler login` first",
+        code: "NO_ACCOUNT",
+        message: account.error,
         retryable: true,
       });
     }
+    const accountId = account.result.id;
 
     const commands: Command[] = [];
-    const dryRun = c.options.dryRun === true;
     const report = await runSetup({
       domain: c.options.domain,
       access: c.options.access ?? [],
@@ -472,7 +477,7 @@ cli.command("setup", {
       dryRun,
       configPath,
       accountId,
-      cf: { token, ...(dryRun ? { fetch: readOnlyFetch() } : {}) },
+      cf,
       run: dryRun ? recordingRunner(commands) : runCommand,
       commands,
       storeToken: (host, token) => writeHostFile(host, token, c.env),
@@ -482,17 +487,35 @@ cli.command("setup", {
 
     // The checklist IS the result: incur renders it for a person and hands the
     // same object to an agent, so there is no second formatter to drift.
-    const failed = report.steps.some((s) => s.verdict === "failed");
-    return failed
-      ? c.error({
-          code: "SETUP_INCOMPLETE",
-          message: report.steps
-            .filter((s) => s.verdict === "failed")
-            .map((s) => `${s.step}: ${s.detail}`)
-            .join("; "),
-          retryable: true,
-        })
-      : c.ok(report);
+    //
+    // ON FAILURE IT IS STILL THE RESULT. This used to return only the failing
+    // steps' details, which threw away the other six verdicts — so a run that
+    // failed on the last step reported nothing about the five that had worked,
+    // and you could not tell a token missing one permission from a setup that
+    // had done nothing at all. That is the failure this file's own header argues
+    // against: a checklist that omits what it did is worse than no checklist.
+    //
+    // The whole list goes in the message because incur's error envelope carries
+    // a `message` and no structured payload. Failures lead, since that is what
+    // has to be acted on, and the full checklist follows so nothing is lost.
+    const failed = report.steps.filter((s) => s.verdict === "failed");
+    if (!failed.length) return c.ok(report);
+
+    const checklist = report.steps.map((s) => `  ${s.step}: ${s.verdict} — ${s.detail}`).join("\n");
+    return c.error({
+      code: "SETUP_INCOMPLETE",
+      message: `${failed.map((s) => `${s.step}: ${s.detail}`).join("; ")}\n\nThe full checklist, including the steps that succeeded:\n${checklist}`,
+      cta: {
+        description: "Setup is idempotent — fix the cause and run it again:",
+        commands: [
+          {
+            command: `setup --domain ${c.options.domain} --dry-run`,
+            description: "Re-check without changing anything; reads run for real",
+          },
+        ],
+      },
+      retryable: true,
+    });
   },
 });
 

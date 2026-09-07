@@ -45,6 +45,10 @@ type World = {
   workers?: { id: string; name: string }[];
   organization?: { auth_domain: string; name: string };
   writes: { method: string; url: string; body: unknown }[];
+  /** Every path READ, so a test can assert what setup did not go looking for.
+      Writes alone cannot: a lookup is a GET, so "no write mentions the Worker"
+      was true whether or not the Worker had been resolved. */
+  reads: string[];
   /** What `wrangler secret list` answers. */
   secrets: string[];
   /** What the hosts file ended up holding, if anything. Never a real path — the
@@ -60,6 +64,7 @@ const emptyWorld = (): World => ({
   workers: [{ id: WORKER_ID, name: "cdn-explorer" }],
   organization: { auth_domain: "acme.cloudflareaccess.com", name: "Acme" },
   writes: [],
+  reads: [],
   secrets: [],
 });
 
@@ -73,7 +78,8 @@ const cloudflare = (world: World): typeof globalThis.fetch => {
     const path = url.pathname.replace("/client/v4", "");
     const method = (init?.method ?? "GET").toUpperCase();
     const body: unknown = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-    if (method !== "GET") world.writes.push({ method, url: path, body });
+    if (method === "GET") world.reads.push(path);
+    else world.writes.push({ method, url: path, body });
 
     if (method === "GET" && path === "/zones") {
       const name = url.searchParams.get("name");
@@ -88,6 +94,21 @@ const cloudflare = (world: World): typeof globalThis.fetch => {
       }
       if (method === "GET" || method === "PATCH") {
         return json({ id: "browser_cache_ttl", value: world.browserCacheTtl, editable: true });
+      }
+    }
+    // The Worker's secrets, which setup now reads and writes over the API
+    // rather than through `wrangler` — one credential for the whole command
+    // instead of two that can disagree. The path carries the script name, so
+    // the stub matches on it rather than hard-coding one.
+    const secrets = /^\/accounts\/([^/]+)\/workers\/scripts\/([^/]+)\/secrets$/.exec(path);
+    if (secrets) {
+      if (method === "GET") {
+        return json(world.secrets.map((name) => ({ name, type: "secret_text" })));
+      }
+      if (method === "PUT") {
+        const name = Reflect.get(Object(body), "name");
+        if (typeof name === "string" && !world.secrets.includes(name)) world.secrets.push(name);
+        return json({ name, type: "secret_text" });
       }
     }
     if (method === "GET" && path === `/accounts/${ACCOUNT}/tokens`) return json(world.tokens);
@@ -184,22 +205,12 @@ const baseOptions = (o: { world: World; fetch: typeof globalThis.fetch }) => ({
   writeFile: () => Promise.resolve(),
 });
 
-/** A wrangler, in memory. Only the READ has to answer anything real — that is
-    the half a dry run still runs. */
-const wrangler = (world: World, ranForReal: Command[]): Runner => {
+/** A wrangler, in memory. `wrangler deploy` is the only thing setup still
+    shells out for — the account lookup and both secret steps moved to the API,
+    so there is nothing here a dry run needs to read. */
+const wrangler = (_world: World, ranForReal: Command[]): Runner => {
   return (cmd) => {
-    const argv = cmd.argv.join(" ");
-    if (argv.startsWith("wrangler secret list")) {
-      return Promise.resolve({
-        code: 0,
-        stdout: JSON.stringify(world.secrets.map((name) => ({ name, type: "secret_text" }))),
-        stderr: "",
-      });
-    }
     ranForReal.push(cmd);
-    if (cmd.argv[1] === "secret" && cmd.argv[2] === "put" && cmd.argv[3]) {
-      world.secrets.push(cmd.argv[3]);
-    }
     return Promise.resolve({ code: 0, stdout: "", stderr: "" });
   };
 };
@@ -278,13 +289,19 @@ describe("cdn setup, first run", () => {
       ],
     });
 
-    // The secret went in over stdin, not as an argument — an argument would put
-    // it in a process list.
-    // Named explicitly: setup now sets two secrets, and "the first one that
-    // mentions `secret`" would quietly become whichever step runs first.
-    const put = ranForReal.find((c) => c.argv.includes("CDN_PURGE_TOKEN"));
-    expect(put?.argv).toEqual(["wrangler", "secret", "put", "CDN_PURGE_TOKEN"]);
-    expect(put?.input).toBe("cfat_secret");
+    // The minted value went into a request body — never a process argument, and
+    // never a shell history. Named explicitly: setup sets two secrets, and "the
+    // first write that mentions a secret" would quietly become whichever step
+    // runs first.
+    const put = world.writes.find(
+      (w) => w.method === "PUT" && Reflect.get(Object(w.body), "name") === "CDN_PURGE_TOKEN"
+    );
+    expect(put?.url).toBe(`/accounts/${ACCOUNT}/workers/scripts/cdn-explorer/secrets`);
+    expect(put?.body).toEqual({
+      name: "CDN_PURGE_TOKEN",
+      text: "cfat_secret",
+      type: "secret_text",
+    });
     expect(ranForReal.some((c) => c.argv.join(" ") === "wrangler deploy")).toBe(true);
   });
 
@@ -415,28 +432,33 @@ describe("upload token", () => {
   // of hex is not something to put in front of a person, and a flow that does it
   // anyway gets a placeholder typed into it.
   test("is generated, set as a secret, and stored for this machine", async () => {
-    const { report, world, ranForReal } = await run();
+    const { report, world } = await run();
     const step = report.steps.find((s) => s.step === "upload token");
     expect(step?.verdict).toBe("created");
 
-    const put = ranForReal.find((c) => c.argv.includes("CDN_UPLOAD_TOKEN"));
-    expect(put?.argv).toEqual(["wrangler", "secret", "put", "CDN_UPLOAD_TOKEN"]);
-    // Over stdin, never an argument — an argument is in the process list.
-    expect(put?.input).toMatch(/^[0-9a-f]{64}$/);
+    const put = world.writes.find(
+      (w) => w.method === "PUT" && Reflect.get(Object(w.body), "name") === "CDN_UPLOAD_TOKEN"
+    );
+    expect(put?.url).toBe(`/accounts/${ACCOUNT}/workers/scripts/cdn-explorer/secrets`);
+    // In a request body, never an argument — an argument is in the process list.
+    const text = Reflect.get(Object(put?.body), "text");
+    expect(text).toMatch(/^[0-9a-f]{64}$/);
 
     // The same token reached the hosts file, so the CLI works immediately.
     expect(world.stored?.host).toBe(DOMAIN);
-    expect(world.stored?.token).toBe(put?.input);
+    expect(world.stored?.token).toBe(text);
   });
 
   // The one that matters: an existing token belongs to writers on machines that
   // are not this one, and replacing it breaks all of them at once, silently.
   test("an existing secret is never replaced", async () => {
     const world = { ...emptyWorld(), secrets: ["CDN_UPLOAD_TOKEN"] };
-    const { report, world: after, ranForReal } = await run({ world });
+    const { report, world: after } = await run({ world });
     expect(verdicts(report)["upload token"]).toBe("present");
     expect(report.steps.find((s) => s.step === "upload token")?.detail).toContain("cdn auth login");
-    expect(ranForReal.some((c) => c.argv.includes("CDN_UPLOAD_TOKEN"))).toBe(false);
+    expect(
+      after.writes.some((w) => Reflect.get(Object(w.body), "name") === "CDN_UPLOAD_TOKEN")
+    ).toBe(false);
     expect(after.stored).toBeUndefined();
   });
 
@@ -569,8 +591,11 @@ describe("access", () => {
     const { report, world } = await run({ access: ["@example.com"], accessHostname: true });
     expect(report.accessMode).toBe("hostname");
     expect(report.steps.find((s) => s.step === "access")?.detail).toContain("--access-hostname");
-    // And it never asked about the Worker at all.
-    expect(world.writes.some((w) => w.url.includes("/workers/"))).toBe(false);
+    // And it never asked about the Worker at all. Asserted on READS, because
+    // resolving a Worker is a GET — checking writes proved nothing, and stopped
+    // even looking like it once the secret steps began writing under
+    // /workers/scripts/.
+    expect(world.reads.some((path) => path.includes("/workers/workers/"))).toBe(false);
   });
 
   test("is skipped without --access, rather than guessing who should get in", async () => {

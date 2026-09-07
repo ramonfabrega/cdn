@@ -110,12 +110,23 @@ Create it at **Manage Account → Account API Tokens** with:
 | `Zone Read` | the zone | Finding the zone id from your domain |
 | `Zone Settings Read` + `Write` | the zone | Reading and setting Browser Cache TTL |
 | `Account API Tokens Read` + `Write` | the account | Listing permission groups, and minting the purge token |
+| `Workers Scripts Read` + `Write` | the account | Reading and setting the Worker's secrets, and `wrangler deploy` for the custom domain. With `--access`, also resolving the Worker's id so Access can protect the Worker rather than one hostname — without it setup falls back and tells you. |
 | `Access: Apps and Policies Read` + `Write` | **the account** | `--access` only — the application and its bypass |
 | `Access: Organizations, Identity Providers, and Groups Read` | the account | `--access` only — finding your team domain |
-| `Workers Scripts Read` | the account | `--access` only — resolving the Worker's id, so Access can protect the Worker rather than one hostname. Without it setup falls back and tells you. |
 
-The upload-token step needs no API permission at all — it goes through `wrangler`, which uses the
-session you already have from `wrangler login`.
+Resolving *which account* needs no permission at all: `GET /accounts` answers for any token, and
+setup asks the token who it is rather than asking `wrangler whoami`. Those two were allowed to
+disagree, and when they did, every verdict in the report described one account while the secrets
+were written to another's Worker.
+
+**One credential, not two.** Setup used to shell out to `wrangler` for the account id and both
+secret steps, on the theory that they would ride your `wrangler login` and need no API permission.
+They did not. **wrangler prefers `CLOUDFLARE_API_TOKEN` over its stored session**, so the broad
+setup token — which setup necessarily passes to every child process — silently *replaced* the login
+those steps were documented to use, and they failed with `Authentication error` on a token that
+looked correct. Measured on a real run, 2026-09-07. The secrets now go over the API with the same
+token as everything else, so there is one thing to authorize and one place to look when it is
+refused. `wrangler deploy` is the only shell-out left, and it uses that same token too.
 
 **Two of those names exist twice.** `Access: Apps and Policies Read` and `Write` are offered both
 account-scoped and zone-scoped — same name, different permission — and this needs the **account**

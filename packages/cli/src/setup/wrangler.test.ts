@@ -9,7 +9,6 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  accountIdFrom,
   addPurgeVars,
   addRoute,
   hasRoute,
@@ -123,25 +122,6 @@ describe("addPurgeVars", () => {
   });
 });
 
-describe("accountIdFrom", () => {
-  test("finds the id in whatever table wrangler printed", () => {
-    const whoami = `
- ⛅️ wrangler 4.97.0
- Getting User settings...
- 👋 You are logged in with an OAuth Token, associated with the email someone@example.com.
- ┌──────────────────────┬──────────────────────────────────┐
- │ Account Name         │ Account ID                       │
- ├──────────────────────┼──────────────────────────────────┤
- │ Someone's Account    │ a1b2c3d4e5f60718293a4b5c6d7e8f90 │
- └──────────────────────┴──────────────────────────────────┘`;
-    expect(accountIdFrom(whoami)).toBe("a1b2c3d4e5f60718293a4b5c6d7e8f90");
-  });
-
-  test("undefined rather than a wrong guess when there is no id", () => {
-    expect(accountIdFrom("not logged in")).toBeUndefined();
-  });
-});
-
 describe("zoneCandidates", () => {
   // "Strip to the last two labels" is wrong for every multi-part public suffix,
   // and getting it right in general needs a public-suffix list — a dependency
@@ -174,10 +154,22 @@ describe("recordingRunner", () => {
       stdout: "",
       stderr: "",
     });
-    await run({ argv: ["wrangler", "secret", "put", "CDN_PURGE_TOKEN"], input: "s3cret" });
-    expect(log).toEqual([
-      { argv: ["wrangler", "deploy"] },
-      { argv: ["wrangler", "secret", "put", "CDN_PURGE_TOKEN"], input: "s3cret" },
-    ]);
+    expect(log).toEqual([{ argv: ["wrangler", "deploy"] }]);
+  });
+
+  // The allowlist is empty now that every read moved to the API, so nothing is
+  // exempt. Pinned rather than left implicit: if a read command ever comes back,
+  // this is the test that says it must be declared to pass through, and a dry
+  // run that silently ran something would fail here first.
+  test("with an empty allowlist, nothing reaches the inner runner", async () => {
+    const log: { argv: string[]; input?: string }[] = [];
+    let ran = 0;
+    const run = recordingRunner(log, () => {
+      ran += 1;
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    });
+    await run({ argv: ["wrangler", "secret", "list", "--format", "json"] });
+    expect(ran).toBe(0);
+    expect(log).toEqual([{ argv: ["wrangler", "secret", "list", "--format", "json"] }]);
   });
 });
