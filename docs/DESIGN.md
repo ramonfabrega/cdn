@@ -49,6 +49,57 @@ world-readable token, say — the step fails loudly and says the secret is only
 shown once, because at that point the value is genuinely gone and the fix is to
 delete the secret and re-run rather than to hunt for it.
 
+## The press, all the way through (2026-09-07)
+
+The template deployed as a stranger would deploy it — button, dialog, build,
+first login, first upload — on a throwaway Worker beside the live one. What it
+settled:
+
+**The button rewrites the Wrangler config and pushes it.** This was the last
+thing no amount of reading resolved, and it mattered because `wrangler deploy`
+takes the Worker's name from that file: a config still saying `cdn-explorer`
+would have aimed a fresh deploy at the live Worker. Diffing the repo the button
+created against this one, it changed exactly two lines and nothing else —
+
+```diff
+-  "name": "cdn-explorer",
++  "name": "cdn-explorer-test",
+-  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "cdn" }],
++  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "cdn-test","preview_bucket_name": "cdn-test" }],
+```
+
+— taking both names from the setup form and adding a `preview_bucket_name` this
+repo does not ship. The build log agrees: `Uploaded cdn-explorer-test` and
+`env.BUCKET (cdn-test)`. So the names in `wrangler.jsonc` are DEFAULTS a presser
+overrides in the form, exactly as the comment beside `bucket_name` claims, and
+the config in the created repo stays consistent for every later build.
+
+The form also validates the Worker name against the account's existing Workers —
+typing a name already in use is rejected before anything is created — which is
+the mechanism that makes the above safe rather than merely lucky.
+
+**The one-field deploy works on real infrastructure.** In order, each step being
+the first time that path had run anywhere:
+
+- `/login` answered **200 with the password form**, not the 503 "not configured"
+  page — so the single dialog field reached the Worker as a secret.
+- Signing in worked with **no `CDN_SESSION_SECRET` on the Worker at all**, which
+  is the derived-key path from the section above.
+- A drag-and-drop upload succeeded with **no `CDN_UPLOAD_TOKEN` set**, through
+  the cookie-authenticated route — the write path being closed to machines does
+  not close it to a person.
+- The object came back publicly at `200` with
+  `content-type: text/plain; charset=utf-8` and
+  `cache-control: public, max-age=0, s-maxage=3600`, the documented policy,
+  from a Worker holding exactly one secret.
+- The page titled itself `cdn-explorer-test · sign in` — `brand()` reading the
+  request host, so a `workers.dev` deploy labels itself with no configuration.
+
+**And it is a cheap loop to re-run.** Delete the repo and the bucket, press
+again; nothing about the template holds state between attempts. That is worth
+knowing because the remaining unknowns in this project are all of that shape —
+things no document answers, that one press answers in four minutes.
+
 ## One field, and the two ways that went wrong (2026-09-07)
 
 Found by pressing the button. The first real run of this template through the
@@ -511,12 +562,15 @@ disclaimer in the README.
 The constraint left worth watching isn't size, it's
 [startup time](https://developers.cloudflare.com/workers/platform/limits/#worker-startup-time):
 a Worker must parse and execute its global scope within 1 second, and a 3.6 MB
-WASM module is the kind of thing that eats that budget. Not measured here — the
-live instance has never tripped it, and takumi is a static import in
-`src/worker.ts`, so if it ever does, the fix is to load the renderer inside the
-`/.og/*` handler rather than to shrink the bundle. That limit will bite long
-before 64 MiB does; when something feels slow to cold-start, measure startup,
-not size.
+WASM module is the kind of thing that eats that budget.
+
+**Now measured, on a cold first deploy of a fresh Worker: `Worker Startup Time:
+1 ms`.** One thousandth of the budget. So the concern was real but the answer is
+not close — takumi's WASM is compiled by the runtime, not executed at global
+scope, and the static import in `src/worker.ts` costs nothing measurable. If it
+ever does change, the fix is to load the renderer inside the `/.og/*` handler
+rather than to shrink the bundle. That limit would still bite long before 64 MiB
+does; when something feels slow to cold-start, measure startup, not size.
 
 Re-run the measurement with:
 
