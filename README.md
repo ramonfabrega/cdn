@@ -46,7 +46,7 @@ ends by naming what it cannot do at all.
 | browser cache TTL | **Reads and reports only** — see below. |
 | purge token | Mints an account-owned token with *only* Cache Purge on your zone, verifies it, and stores it as `CDN_PURGE_TOKEN`. |
 | purge vars | Adds `CDN_ZONE_ID` and `CDN_PUBLIC_ORIGIN` to `wrangler.jsonc`. |
-| access | With `--access`: an Access application on the hostname allowing who you named, **plus a bypass on `/api/upload`** so every writer keeps working. |
+| access | With `--access`: an Access application on the **Worker**, allowing who you named — which covers its routes, Custom Domains, `workers.dev` hostname *and* preview URLs in one — **plus a bypass on `/api/upload`** so every writer keeps working. Falls back to a hostname application if it cannot resolve the Worker, and says so. |
 
 **The one step it won't do for you.** Browser Cache TTL must be **"Respect Existing Headers"**
 (Caching → Configuration) — it's load-bearing and the Worker cannot enforce it, because Cloudflare's
@@ -67,6 +67,7 @@ Create it at **Manage Account → Account API Tokens** with:
 | `Account API Tokens Read` + `Write` | the account | Listing permission groups, and minting the purge token |
 | `Access: Apps and Policies Read` + `Write` | the account | `--access` only — the application and its bypass |
 | `Access: Organizations, Identity Providers, and Groups Read` | the account | `--access` only — finding your team domain |
+| `Workers Scripts Read` | the account | `--access` only — resolving the Worker's id, so Access can protect the Worker rather than one hostname. Without it setup falls back and tells you. |
 
 Delete it when setup is done. Everything it configured keeps working; the CDN never uses it again.
 
@@ -81,12 +82,22 @@ Note that taking a custom domain drops the `workers.dev` route that preview URLs
 [Previews](#previews).
 
 **On Access and the password.** `CDN_PASSWORD` is one string everyone knows and nobody rotates:
-right for one person, wrong for an organization. With Access in front, a verified
-`Cf-Access-Jwt-Assertion` **is** the session — set `CDN_ACCESS_TEAM` and `CDN_ACCESS_AUD` (setup
-prints both) and a team instance runs with no shared secret at all. The password stays as the
-fallback, because a preview URL outside the Access application still has to be reachable. The
-assertion is *verified*, never trusted: Access guards the front door, so a request arriving any
-other way can set whatever header it likes.
+right for one person, wrong for an organization. With Access in front, an authenticated visitor
+**is** the session — set `CDN_ACCESS_TEAM` and `CDN_ACCESS_AUD` (setup prints both) and a team
+instance runs with no shared secret at all. The password stays as the fallback, because an instance
+that turns Access off, or a route outside the application, still has to be reachable.
+
+Access arrives two ways and the Worker takes both. A **Worker-level** application (what `--access`
+makes by default) authenticates the invocation itself, and the runtime hands the result to the
+isolate as `ctx.access` — nothing in the request, nothing to forge. A **hostname** application
+authenticates at the edge and injects `Cf-Access-Jwt-Assertion`; that one is *verified*, never
+trusted — RS256 pinned, issuer and audience checked — because Access guards the front door and a
+request arriving any other way can set whatever header it likes. Either way the `aud` must be this
+instance's: somebody else's Access application is not a key to this one.
+
+`--access-hostname` forces the hostname shape. The one reason to: **Worker-level Access does not
+support WebSockets**, and an upgrade request to a Worker protected that way gets a `403`. This
+Worker opens no sockets; a fork that adds them wants the flag.
 
 Writers are anything that can `POST` a file with a bearer token: a shell one-liner, a CLI, an
 editor hook, a macOS Shortcut. They share **no code** with the Worker — send the bytes, get the URL
@@ -342,10 +353,13 @@ command.
   idempotent orchestration. Every shape came out of Cloudflare's reference, and where a value
   couldn't be confirmed the code declines rather than guessing — see
   [`docs/DESIGN.md`](docs/DESIGN.md).
-- **`src/access.ts`** — verifies an Access assertion: RS256 pinned, issuer and audience checked,
-  `exp`/`nbf` enforced, signing keys cached with one forced refetch on an unknown `kid` so a key
-  rotation costs a fetch and not an outage. Its tests sign real tokens with a generated keypair,
-  because every case in them is a way in if the check is wrong.
+- **`src/access.ts`** — the two ways Access arrives. A Worker-level application leaves its answer
+  on the context, so `accessRanForThisWorker` only has to check the `aud` is ours — there is no
+  token, and nothing a request can set. A hostname application sends an assertion, and that one is
+  verified: RS256 pinned, issuer and audience checked, `exp`/`nbf` enforced, signing keys cached
+  with one forced refetch on an unknown `kid` so a key rotation costs a fetch and not an outage. Its
+  tests sign real tokens with a generated keypair, because every case in them is a way in if the
+  check is wrong.
 - **`packages/cli/hooks/lib.ts`** — what is the hooks' alone: `emit` (the PostToolUse contract —
   additionalContext *and* systemMessage, so the URL survives even if the model forgets to relay it)
   and `slugFor` (a path hash, so re-sending one file overwrites its copy while two files sharing a
@@ -497,7 +511,11 @@ preview version talks to the *live* R2 bucket with the *live* secrets — delibe
 with an empty bucket tells you nothing), but it means the delete / move / rename APIs on a preview
 URL hit real objects. The blast radius is bounded by what a version *cannot* do: it never answers
 on your custom domain and it never runs the cron sweep — only the deployed version does. The
-`CDN_PASSWORD` gate covers previews exactly as it covers prod.
+`CDN_PASSWORD` gate covers previews exactly as it covers prod — and with `cdn setup --access`,
+so does Access: a Worker-level application protects "every domain associated with the Worker,
+including its routes, Custom Domains, `workers.dev` hostname, and previews", which is the reason it
+is the default shape. A hostname application does not; if setup fell back to one, previews are
+behind the password alone.
 
 ### Secrets
 

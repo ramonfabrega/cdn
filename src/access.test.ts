@@ -9,7 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-import { forgetAccessKeys, verifyAccessJwt } from "./access.ts";
+import { accessRanForThisWorker, forgetAccessKeys, verifyAccessJwt } from "./access.ts";
 
 const TEAM = "acme";
 const AUD = "aud-tag-abc123";
@@ -216,5 +216,37 @@ describe("verifyAccessJwt", () => {
     expect(res.ok).toBe(false);
     if (res.ok) return;
     expect(res.reason).toContain("certs unavailable");
+  });
+});
+
+// The other shape of Access. A Worker-level application decides before the
+// isolate runs and leaves the answer on the context, so there is no token here to
+// verify — what there is, is an `aud` that has to be OURS.
+//
+// Unit-level on purpose: `SELF.fetch` runs the real runtime, and the real runtime
+// only sets `ctx.access` when a real Access application authenticated the
+// invocation. There is nothing a test can hand it, which is exactly the property
+// that makes this signal trustworthy where the header is not.
+describe("a Worker-level Access session", () => {
+  test("is a way in when the aud is this instance's", () => {
+    expect(accessRanForThisWorker({ access: { aud: AUD } }, AUD)).toBe(true);
+  });
+
+  test("some other application's aud is not", () => {
+    // An account-wide Access application, or a neighbour's: it authenticated
+    // somebody, but not against the policy this instance was configured with.
+    expect(accessRanForThisWorker({ access: { aud: "someone-elses" } }, AUD)).toBe(false);
+  });
+
+  test("a context Access never touched is not", () => {
+    // "ctx.access is undefined if Access did not authenticate the request."
+    expect(accessRanForThisWorker({ waitUntil: () => {} }, AUD)).toBe(false);
+    expect(accessRanForThisWorker(undefined, AUD)).toBe(false);
+    expect(accessRanForThisWorker(null, AUD)).toBe(false);
+  });
+
+  test("an aud-shaped value that is not a string is not", () => {
+    expect(accessRanForThisWorker({ access: { aud: { toString: () => AUD } } }, AUD)).toBe(false);
+    expect(accessRanForThisWorker({ access: {} }, AUD)).toBe(false);
   });
 });

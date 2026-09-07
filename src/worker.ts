@@ -17,7 +17,7 @@ import { deleteCookie, getSignedCookie, setSignedCookie } from "hono/cookie";
 import { stream } from "hono/streaming";
 import { ImageResponse } from "takumi-js/response";
 
-import { type AccessConfig, verifyAccessJwt } from "./access.ts";
+import { type AccessConfig, accessRanForThisWorker, verifyAccessJwt } from "./access.ts";
 import { CARD_FONTS, folderCard } from "./card.ts";
 import { folderPage } from "./folder.tsx";
 import { mimeFor, publicUrl } from "./lib/cdn.ts";
@@ -161,6 +161,17 @@ const accessConfig = (env: Env): AccessConfig | undefined => {
   return team && aud ? { team, aud } : undefined;
 };
 
+// Hono throws rather than answering `undefined` when a context has no
+// ExecutionContext, which is the normal state under `app.request()` in tests.
+// The gate wants a value, not an exception.
+const executionContext = (c: { executionCtx: unknown }): unknown => {
+  try {
+    return c.executionCtx;
+  } catch {
+    return undefined;
+  }
+};
+
 // ── auth gate — protects only the explorer (/ and /api/*). Object serving (the
 // CDN) and the auth pages stay public. ───────────────────────────────────────
 app.use("*", async (c, next) => {
@@ -171,19 +182,26 @@ app.use("*", async (c, next) => {
   // else — the explorer + destructive APIs — requires a session.
   if (BEARER_PATHS.has(path) && bearerOk(c.env, c.req.header("authorization"))) return next();
 
-  // An Access assertion is a session. A team instance then runs with no shared
-  // secret at all: identity is per-person, revocable and audited by whatever IdP
-  // the organization already has, instead of one password everyone knows and
-  // nobody rotates.
+  // An authenticated Access visitor is a session. A team instance then runs with
+  // no shared secret at all: identity is per-person, revocable and audited by
+  // whatever IdP the organization already has, instead of one password everyone
+  // knows and nobody rotates.
   const access = accessConfig(c.env);
-  const assertion = c.req.header("cf-access-jwt-assertion");
-  if (access && assertion) {
-    const verified = await verifyAccessJwt(access, assertion);
-    if (verified.ok) return next();
-    // Worth a line: a failing assertion on a host that HAS Access in front of it
-    // means something is misconfigured (a stale AUD after re-creating the app is
-    // the usual culprit), and the fall-through to the password hides it.
-    console.error(`access assertion rejected: ${verified.reason}`);
+  if (access) {
+    // Two shapes, checked in the order they cost. A Worker-level application
+    // has already decided this before the isolate ran and left the answer on the
+    // context — no header to verify, no certs to fetch, nothing to cache.
+    if (accessRanForThisWorker(executionContext(c), access.aud)) return next();
+
+    const assertion = c.req.header("cf-access-jwt-assertion");
+    if (assertion) {
+      const verified = await verifyAccessJwt(access, assertion);
+      if (verified.ok) return next();
+      // Worth a line: a failing assertion on a host that HAS Access in front of
+      // it means something is misconfigured (a stale AUD after re-creating the
+      // app is the usual culprit), and the fall-through to the password hides it.
+      console.error(`access assertion rejected: ${verified.reason}`);
+    }
   }
 
   const ok = await getSignedCookie(c, sessionSecret(c.env), COOKIE);

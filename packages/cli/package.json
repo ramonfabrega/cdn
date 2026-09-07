@@ -15,7 +15,7 @@
   ],
   "scripts": {
     "test": "bun test",
-    "skill": "bun bin/cdn.ts --llms > skills/cdn/SKILL.md"
+    "skill": "bun bin/cdn.ts --llms-full > skills/cdn/SKILL.md"
   },
   "dependencies": {
     "incur": "^0.5.1",

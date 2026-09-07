@@ -4,6 +4,77 @@ Why things are the way they are. `CLAUDE.md` carries what every session needs;
 this file carries the decisions that were arguable, with the evidence that
 settled them. Newest first.
 
+## Access protects the Worker, not a hostname (2026-09-07)
+
+`cdn setup --access` used to create an Access application on the hostname you
+gave it. It now creates one on the **Worker**, and the difference is everything
+the Worker answers on that isn't that hostname: its routes, its Custom Domains,
+its `workers.dev` hostname, and — the reason this was worth doing — its preview
+URLs. A preview shares production's bindings, so before this it was the live
+bucket behind a password and nothing else. The hostname application remains, as
+a fallback, and setup says when it fell back to one.
+
+**The finding this was chartered from was wrong in its most important word, and
+re-reading the docs is what caught it.** It said `preview_worker` covers routes,
+Custom Domains, workers.dev and previews in one application. It does not:
+`preview_worker` covers *previews only*. The type that covers everything is
+`worker` — "A specific Cloudflare Worker that Access will secure. All requests
+routed to the specified Worker, including its preview deployments, will be
+protected." Shipping the remembered version would have produced an application
+that looked right in the dashboard and protected nothing anyone visits.
+
+**`worker_id` is the Worker's id, and there are two 32-hex values it could be.**
+`GET /workers/scripts` answers `{id: <name>, tag: <uuid>}`, and the Builds API
+documents that `tag` as `external_script_id`. The Workers resource answers `id`,
+documented as "Immutable ID of the Worker". The Access schema asks for "The ID
+of the Cloudflare Worker to protect with Access". Only one of those is documented
+as the Worker's ID, so setup asks
+`GET /accounts/{id}/workers/workers/{worker_id}` — whose path parameter is
+"Identifier for the Worker, which can be ID or name", so the name from
+`wrangler.jsonc` goes in and the id comes back in one call. The two values are
+probably the same UUID. "Probably" is how you ship an application that protects
+a Worker nobody has.
+
+**Not resolving the Worker is a fallback, not a failure.** A token without
+Workers read, an account with nothing deployed yet, a Worker the account knows
+by another name: in every one of those the hostname application is still exactly
+what setup made before this, and it still works. What changes is the preview URLs,
+so the step's detail says which shape it made and, when it fell back, why —
+a checklist that reports the same sentence for two different outcomes is a
+checklist that has stopped being one.
+
+**The bypass had to learn to say `public` out loud.** Access resolves the most
+specific rule first: "Hostname or path-based Access: Applies first … Worker-level
+Access: Applies next … Account-level Worker Access: Applies last." The
+`/api/upload` bypass is path-based, so it still wins — but the schema documents
+precedence over a `worker` destination for the `public` destination *type* by
+name, and the bypass had been carrying only the legacy `domain` field. Against a
+Worker-level application it now carries both. In hostname mode nothing changed:
+two domain-shaped applications, no race to win, and the shape that shipped is the
+shape that stays.
+
+**The Worker learned the other half.** Worker-level Access does not hand the
+isolate a header to verify; it hands it `ctx.access` — "When Cloudflare Access
+authenticates a request that directly invokes your Worker … No extra
+configuration or JWT parsing is required", and "`ctx.access` is undefined if
+Access did not authenticate the request". So the gate checks that first and the
+assertion second. The asymmetry is deliberate and is the whole security argument:
+the header is part of the request and anyone reaching the Worker another way can
+set it, while `ctx.access` is set by the runtime and cannot be sent. The `aud`
+comparison stays in both paths — it is what makes somebody else's Access
+application not a key to this one. It is read structurally rather than through a
+type, because `ctx.access` is newer than the `@cloudflare/workers-types` this
+repo pins and a cast asserts something about the runtime instead of asking it.
+It is also why that half is unit-tested: `SELF.fetch` runs the real runtime, and
+the real runtime sets `ctx.access` only for a real Access application — there is
+nothing a test can hand it, which is precisely the property being relied on.
+
+**One documented reason to want the old shape, so there's a flag for it.**
+Worker-level Access policies do not support WebSocket connections; an upgrade
+request to a Worker protected that way gets a `403`. This Worker opens no
+sockets, so the default is safe here — but a fork that adds them needs
+`--access-hostname`, and a fork should not have to discover that from a `403`.
+
 ## What `cdn setup` refuses to do (2026-09-07)
 
 Setup automates the post-deploy checklist. Two steps it deliberately does not,
@@ -29,14 +100,11 @@ Two more findings worth recording, both from reading the docs rather than
 remembering them:
 
 **Access for Workers IS API-drivable**, via `POST /accounts/{id}/access/apps`
-with `destinations: [{ type: "preview_worker", worker_id }]`, and protecting a
-Worker that way covers "routes, Custom Domains, `workers.dev` hostname, and
-previews" in one application. That is strictly better than the two hostname
-applications setup creates today, because it also closes the preview gap the
-Previews section of the README describes — a preview shares production's
-bindings and is currently guarded only by the password. It is not built because
-the destination takes the Worker's *id*, not its name, and that is one more
-lookup whose shape has not been verified. Scoped, not done.
+with a `destinations` entry naming the Worker, and protecting a Worker that way
+covers "routes, Custom Domains, `workers.dev` hostname, and previews" in one
+application — which closes the preview gap the Previews section of the README
+describes. Built hours later; see *Access protects the Worker, not a hostname*
+above, which also corrects the destination type this paragraph first named.
 
 **One-time PIN is no longer the default identity provider.** As of 2026-06-18
 new Zero Trust organizations get Cloudflare's own IdP instead, and OTP has to be

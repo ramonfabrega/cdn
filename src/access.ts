@@ -56,6 +56,37 @@ const audiences = (payload: unknown): string[] => {
 export type AccessConfig = { team: string; aud: string };
 export type AccessResult = { ok: true; email?: string } | { ok: false; reason: string };
 
+/**
+ * Did Access authenticate this request against the WORKER itself?
+ *
+ * There are two shapes of Access application in front of a Worker and they
+ * arrive differently. A hostname application authenticates at the edge and
+ * injects the signed assertion this file verifies. A Worker-level application —
+ * what `cdn setup` now makes by default, because it also covers the preview URLs
+ * — authenticates the invocation, and the runtime hands the result to the
+ * isolate as `ctx.access`: "When Cloudflare Access authenticates a request that
+ * directly invokes your Worker, the Worker can read the signed-in user's
+ * identity … through `ctx.access`. No extra configuration or JWT parsing is
+ * required", and "`ctx.access` is undefined if Access did not authenticate the
+ * request."
+ *
+ * That is why this one is not verified and the header is. The header is part of
+ * the request and anyone who reaches the Worker by another route can set it;
+ * `ctx.access` is set by the runtime and there is no way to send it. The `aud`
+ * comparison is still load-bearing — it is what distinguishes THIS instance's
+ * application from any other application on the account that might also have
+ * authenticated the request.
+ *
+ * Read structurally rather than through a type: `ctx.access` is newer than the
+ * `@cloudflare/workers-types` this repo pins, and a cast would assert something
+ * about the runtime instead of asking it.
+ */
+export const accessRanForThisWorker = (ctx: unknown, aud: string): boolean => {
+  const access = typeof ctx === "object" && ctx !== null ? Reflect.get(ctx, "access") : undefined;
+  if (typeof access !== "object" || access === null) return false;
+  return str(access, "aud") === aud;
+};
+
 // The signing keys change; refetching them per request would add a subrequest to
 // every page load. Cached per team in the isolate, with a short TTL and a forced
 // refetch when a `kid` is unknown — which is exactly what a rotation looks like

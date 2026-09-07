@@ -13,12 +13,17 @@
 
 import type { CloudflareOptions } from "../cloudflare.ts";
 import {
+  type AccessMode,
   createApp,
   explorerApp,
   findApp,
+  findWorker,
+  findWorkerApp,
   getOrganization,
   teamOf,
   uploadBypassApp,
+  type WorkerRef,
+  workerApp,
 } from "./access.ts";
 import {
   addPurgeVars,
@@ -28,6 +33,7 @@ import {
   hasVar,
   type Runner,
   routePatterns,
+  workerName,
 } from "./wrangler.ts";
 import {
   browserCacheTtl,
@@ -54,6 +60,11 @@ export type StepResult = { step: string; verdict: Verdict; detail: string };
 export type SetupOptions = {
   domain: string;
   access: string[];
+  /** Gate the hostname instead of the Worker. The escape hatch for the one
+      documented case where Worker-level Access is the wrong tool: it does not
+      support WebSocket connections, and a fork that adds them would get a 403 on
+      every upgrade request. */
+  accessHostname: boolean;
   dryRun: boolean;
   configPath: string;
   /** Read from `wrangler whoami`, never asked for. */
@@ -74,6 +85,10 @@ export type SetupReport = {
       assertion — printed so they can be added to wrangler.jsonc. */
   accessTeam?: string;
   accessAud?: string;
+  /** Which shape of application the Access step made or found. `worker` covers
+      the Worker's routes, Custom Domains, workers.dev hostname and previews;
+      `hostname` covers the one hostname it names. */
+  accessMode?: AccessMode;
   cannotDo: string[];
   commands: string[];
 };
@@ -279,32 +294,65 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
       );
     } else {
       report.accessTeam = teamOf(org.authDomain);
-      // The explorer application.
-      const app = await findApp(cf, accountId, domain);
+
+      // WHICH SHAPE. A Worker-level application protects "every domain
+      // associated with the Worker, including its routes, Custom Domains,
+      // `workers.dev` hostname, and previews"; a hostname application protects
+      // the hostname it names. So the Worker one is the default, and resolving
+      // the Worker's id is the only thing that decides it.
+      //
+      // Failing to resolve it is a FALLBACK, not a failure. A token without
+      // Workers read, an account where nothing is deployed yet, a name this
+      // account knows differently — in every one of those the hostname
+      // application is still the thing setup has always made, and it still
+      // works. What changes is that the preview URLs stay outside it, so the
+      // step says so rather than reporting the same sentence either way.
+      const script = workerName(config);
+      let worker: WorkerRef | undefined;
+      let instead = "";
+      if (options.accessHostname) {
+        instead = "--access-hostname was passed";
+      } else if (!script) {
+        instead = "wrangler.jsonc names no Worker to protect";
+      } else {
+        const found = await findWorker(cf, accountId, script);
+        if (!found.ok) instead = `could not resolve the Worker ${script}: ${found.error}`;
+        else if (!found.result) {
+          instead = `this account has no Worker named ${script} — deploy once, then re-run`;
+        } else worker = found.result;
+      }
+      const mode: AccessMode = worker ? "worker" : "hostname";
+      report.accessMode = mode;
+      const scope = worker
+        ? `the Worker ${worker.name} — its routes, Custom Domains, workers.dev hostname and previews`
+        : `${domain} — that hostname only, so preview URLs keep answering to the password (${instead})`;
+
+      const app = worker
+        ? await findWorkerApp(cf, accountId, worker.id)
+        : await findApp(cf, accountId, domain);
       if (!app.ok) {
         steps.push(step("access", "failed", app.error));
       } else if (app.result) {
         report.accessAud = app.result.aud;
-        steps.push(step("access", "present", `an application already covers ${domain}`));
+        steps.push(step("access", "present", `an application already covers ${scope}`));
       } else if (dryRun) {
         steps.push(
-          step(
-            "access",
-            "skipped",
-            `would create an Access application on ${domain} allowing ${access.join(", ")}`
-          )
+          step("access", "skipped", `would protect ${scope}, allowing ${access.join(", ")}`)
         );
       } else {
-        const created = await createApp(cf, accountId, explorerApp(domain, access));
+        const spec = worker ? workerApp(worker, access) : explorerApp(domain, access);
+        const created = await createApp(cf, accountId, spec);
         if (!created.ok) {
           steps.push(step("access", "failed", created.error));
         } else {
           report.accessAud = created.result.aud;
-          steps.push(step("access", "created", `${domain} — allowing ${access.join(", ")}`));
+          steps.push(step("access", "created", `${scope} — allowing ${access.join(", ")}`));
         }
       }
 
-      // The bypass, which is what keeps every writer working.
+      // The bypass, which is what keeps every writer working. Path-based Access
+      // "applies first", ahead of both shapes above, which is the whole reason
+      // this can be a second application rather than a hole in the first.
       const uploadPath = `${domain}/api/upload`;
       const bypass = await findApp(cf, accountId, uploadPath);
       if (!bypass.ok) {
@@ -320,7 +368,7 @@ export async function runSetup(options: SetupOptions): Promise<SetupReport> {
           )
         );
       } else {
-        const created = await createApp(cf, accountId, uploadBypassApp(domain));
+        const created = await createApp(cf, accountId, uploadBypassApp(domain, mode));
         steps.push(
           created.ok
             ? step(

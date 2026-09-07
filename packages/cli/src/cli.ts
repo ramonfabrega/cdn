@@ -382,6 +382,12 @@ cli.command("setup", {
       .describe(
         "Gate the explorer with Cloudflare Access. An email, or @domain for everyone there"
       ),
+    accessHostname: z
+      .boolean()
+      .optional()
+      .describe(
+        "Gate the hostname instead of the Worker. Worker-level Access does not support WebSockets"
+      ),
     dryRun: z.boolean().optional().describe("Say what would happen and change nothing"),
     config: z.string().optional().describe("Path to wrangler.jsonc (default: ./wrangler.jsonc)"),
   }),
@@ -406,6 +412,12 @@ cli.command("setup", {
       .optional()
       .describe("Add as CDN_ACCESS_TEAM to let the Worker verify assertions"),
     accessAud: z.string().optional().describe("Add as CDN_ACCESS_AUD alongside it"),
+    accessMode: z
+      .enum(["worker", "hostname"])
+      .optional()
+      .describe(
+        "worker covers routes, custom domains, workers.dev and previews; hostname does not"
+      ),
     cannotDo: z.array(z.string()).describe("What this command cannot do, every run"),
     commands: z.array(z.string()).describe("On a dry run, the commands that would have run"),
   }),
@@ -414,7 +426,7 @@ cli.command("setup", {
     { options: { domain: "cdn.example.com" }, description: "Domain, purge token, cache check" },
     {
       options: { domain: "cdn.example.com", access: ["@example.com"] },
-      description: "…and gate the explorer for everyone at example.com",
+      description: "…and gate the Worker for everyone at example.com, previews included",
     },
   ],
   hint: "Needs CLOUDFLARE_API_TOKEN — one broad token, used once, never stored. It is NOT the purge token: that one is narrow, account-owned, and minted by this command.",
@@ -448,6 +460,7 @@ cli.command("setup", {
     const report = await runSetup({
       domain: c.options.domain,
       access: c.options.access ?? [],
+      accessHostname: c.options.accessHostname === true,
       dryRun,
       configPath,
       accountId,

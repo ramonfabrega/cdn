@@ -15,6 +15,8 @@ import { type Command, recordingRunner, runCommand } from "./wrangler.ts";
 const ACCOUNT = "acc123";
 const ZONE = { id: "zone123", name: "example.com" };
 const DOMAIN = "cdn.example.com";
+// The shape the reference's own example uses: 32 hex, not the Worker's name.
+const WORKER_ID = "c81a2d22c29840ed9d61681a3270dbff";
 
 const TEMPLATE = `{
   "name": "cdn-explorer",
@@ -25,11 +27,21 @@ const TEMPLATE = `{
 }
 `;
 
+type App = {
+  id: string;
+  aud: string;
+  domain: string;
+  destinations?: { type: string; worker_id?: string; uri?: string }[];
+};
+
 type World = {
   zones: { id: string; name: string }[];
   browserCacheTtl: number;
   tokens: { id: string; name: string }[];
-  apps: { id: string; aud: string; domain: string }[];
+  apps: App[];
+  /** What `GET /accounts/:id/workers/workers/:name` knows about. Empty is an
+      account with nothing deployed; `undefined` is a token that cannot look. */
+  workers?: { id: string; name: string }[];
   organization?: { auth_domain: string; name: string };
   writes: { method: string; url: string; body: unknown }[];
 };
@@ -39,6 +51,7 @@ const emptyWorld = (): World => ({
   browserCacheTtl: 14400,
   tokens: [],
   apps: [],
+  workers: [{ id: WORKER_ID, name: "cdn-explorer" }],
   organization: { auth_domain: "acme.cloudflareaccess.com", name: "Acme" },
   writes: [],
 });
@@ -85,13 +98,41 @@ const cloudflare = (world: World): typeof globalThis.fetch => {
     }
     if (method === "GET" && path === `/accounts/${ACCOUNT}/access/apps`) {
       const domain = url.searchParams.get("domain");
-      return json(world.apps.filter((a) => a.domain === domain));
+      // No `domain` is the unfiltered listing — how a destination is looked up,
+      // there being no query parameter for one.
+      return json(domain === null ? world.apps : world.apps.filter((a) => a.domain === domain));
     }
     if (method === "POST" && path === `/accounts/${ACCOUNT}/access/apps`) {
-      const domain = String(Reflect.get(Object(body), "domain"));
-      const app = { id: `app-${world.apps.length}`, aud: `aud-${world.apps.length}`, domain };
+      const domain = Reflect.get(Object(body), "domain");
+      const destinations = Reflect.get(Object(body), "destinations");
+      const app: App = {
+        id: `app-${world.apps.length}`,
+        aud: `aud-${world.apps.length}`,
+        // Access answers with a domain whether or not one was sent.
+        domain: typeof domain === "string" ? domain : "",
+        ...(Array.isArray(destinations) ? { destinations } : {}),
+      };
       world.apps.push(app);
       return json(app);
+    }
+    // "Identifier for the Worker, which can be ID or name" — the stub honours
+    // both, because that is what the reference promises.
+    const worker = /^\/accounts\/[^/]+\/workers\/workers\/(.+)$/.exec(path);
+    if (method === "GET" && worker) {
+      if (!world.workers) {
+        return new Response(
+          JSON.stringify({ success: false, errors: [{ message: "Authentication error" }] }),
+          { status: 403 }
+        );
+      }
+      const wanted = decodeURIComponent(worker[1] ?? "");
+      const match = world.workers.find((w) => w.name === wanted || w.id === wanted);
+      return match
+        ? json({ id: match.id, name: match.name })
+        : new Response(
+            JSON.stringify({ success: false, errors: [{ message: "worker not found" }] }),
+            { status: 404 }
+          );
     }
     return new Response(
       JSON.stringify({ success: false, errors: [{ message: "no such route" }] }),
@@ -103,7 +144,13 @@ const cloudflare = (world: World): typeof globalThis.fetch => {
   return wrapped as typeof globalThis.fetch;
 };
 
-type RunOptions = { dryRun?: boolean; access?: string[]; world?: World; config?: string };
+type RunOptions = {
+  dryRun?: boolean;
+  access?: string[];
+  accessHostname?: boolean;
+  world?: World;
+  config?: string;
+};
 
 const run = async (options: RunOptions = {}) => {
   const world = options.world ?? emptyWorld();
@@ -116,6 +163,7 @@ const run = async (options: RunOptions = {}) => {
   const report = await runSetup({
     domain: DOMAIN,
     access: options.access ?? [],
+    accessHostname: options.accessHostname === true,
     dryRun,
     configPath: "wrangler.jsonc",
     accountId: ACCOUNT,
@@ -258,11 +306,12 @@ describe("browser cache TTL", () => {
 });
 
 describe("access", () => {
-  test("creates the explorer app and the upload bypass, and reports both", async () => {
+  test("protects the WORKER by default — routes, custom domains and previews", async () => {
     const { report, world } = await run({ access: ["alice@example.com", "@example.com"] });
 
     expect(verdicts(report).access).toBe("created");
     expect(verdicts(report)["access bypass"]).toBe("created");
+    expect(report.accessMode).toBe("worker");
     expect(report.accessTeam).toBe("acme");
     expect(report.accessAud).toBe("aud-0");
 
@@ -270,12 +319,16 @@ describe("access", () => {
       .filter((w) => w.url.endsWith("/access/apps"))
       .map((w) => w.body);
 
-    // One person and a whole domain, in the selectors the docs specify.
-    expect(explorer).toMatchObject({
+    // The Worker's immutable id, not its name — and no `domain`, because
+    // destinations supersede it and the reference's example sends none.
+    expect(explorer).toEqual({
       type: "self_hosted",
-      domain: DOMAIN,
+      name: "cdn explorer (cdn-explorer)",
+      destinations: [{ type: "worker", worker_id: WORKER_ID }],
+      session_duration: "24h",
       policies: [
         {
+          name: "cdn explorer — allowed people",
           decision: "allow",
           include: [
             { email: { email: "alice@example.com" } },
@@ -287,16 +340,74 @@ describe("access", () => {
 
     // The bypass is the whole reason this is two applications: without it,
     // turning on Access answers every hook, the CLI and the Shortcut with a
-    // login page instead of accepting their bearer.
+    // login page instead of accepting their bearer. Against a Worker-level
+    // application it has to say `public` out loud — that is the destination type
+    // documented to take precedence over `worker`.
     expect(bypass).toMatchObject({
       domain: `${DOMAIN}/api/upload`,
+      destinations: [{ type: "public", uri: `${DOMAIN}/api/upload` }],
       policies: [{ decision: "bypass", include: [{ everyone: {} }] }],
     });
+
+    // And the step says what it covers, because that is the whole difference.
+    const detail = report.steps.find((s) => s.step === "access")?.detail ?? "";
+    expect(detail).toContain("previews");
+  });
+
+  test("--dry-run says which shape it would make, and makes nothing", async () => {
+    const { report, world } = await run({ access: ["@example.com"], dryRun: true });
+    expect(verdicts(report).access).toBe("skipped");
+    expect(report.accessMode).toBe("worker");
+    // It still resolved the Worker for real — a dry run whose reads were faked
+    // could not tell you which shape you are going to get.
+    expect(report.steps.find((s) => s.step === "access")?.detail).toContain("cdn-explorer");
+    expect(world.writes).toEqual([]);
+  });
+
+  test("a Worker this token cannot see falls back to the hostname, and says so", async () => {
+    const world = emptyWorld();
+    world.workers = undefined; // a token without Workers read
+    const { report, world: after } = await run({ access: ["@example.com"], world });
+
+    expect(verdicts(report).access).toBe("created");
+    expect(report.accessMode).toBe("hostname");
+    const detail = report.steps.find((s) => s.step === "access")?.detail ?? "";
+    // The fallback is not silent: the preview URLs are outside this application.
+    expect(detail).toContain("preview URLs keep answering to the password");
+    expect(detail).toContain("could not resolve the Worker cdn-explorer");
+
+    const [explorer, bypass] = after.writes
+      .filter((w) => w.url.endsWith("/access/apps"))
+      .map((w) => w.body);
+    expect(explorer).toMatchObject({ type: "self_hosted", domain: DOMAIN });
+    expect(Reflect.get(Object(explorer), "destinations")).toBeUndefined();
+    // Two domain-shaped applications, no race to win, so the bypass keeps the
+    // shape it shipped with.
+    expect(Reflect.get(Object(bypass), "destinations")).toBeUndefined();
+  });
+
+  test("an account with nothing deployed yet is told to deploy first", async () => {
+    const world = emptyWorld();
+    world.workers = [];
+    const { report } = await run({ access: ["@example.com"], world });
+    expect(report.accessMode).toBe("hostname");
+    expect(report.steps.find((s) => s.step === "access")?.detail).toContain(
+      "no Worker named cdn-explorer"
+    );
+  });
+
+  test("--access-hostname forces the hostname shape (Worker-level has no WebSockets)", async () => {
+    const { report, world } = await run({ access: ["@example.com"], accessHostname: true });
+    expect(report.accessMode).toBe("hostname");
+    expect(report.steps.find((s) => s.step === "access")?.detail).toContain("--access-hostname");
+    // And it never asked about the Worker at all.
+    expect(world.writes.some((w) => w.url.includes("/workers/"))).toBe(false);
   });
 
   test("is skipped without --access, rather than guessing who should get in", async () => {
     const { report, world } = await run();
     expect(verdicts(report).access).toBe("skipped");
+    expect(report.accessMode).toBeUndefined();
     expect(world.writes.some((w) => w.url.endsWith("/access/apps"))).toBe(false);
   });
 
@@ -311,8 +422,39 @@ describe("access", () => {
     expect(step?.detail).toContain("permanent team domain");
   });
 
-  test("existing applications are left alone", async () => {
+  test("an existing Worker application is matched by destination, not by name", async () => {
     const world = emptyWorld();
+    world.apps = [
+      // Renamed by hand in the dashboard, and on a different domain string —
+      // still the application that protects this Worker.
+      {
+        id: "a",
+        aud: "existing-aud",
+        domain: "",
+        destinations: [{ type: "worker", worker_id: WORKER_ID }],
+      },
+      { id: "b", aud: "bypass-aud", domain: `${DOMAIN}/api/upload` },
+    ];
+    const { report } = await run({ access: ["@example.com"], world });
+    expect(verdicts(report).access).toBe("present");
+    expect(verdicts(report)["access bypass"]).toBe("present");
+    expect(report.accessAud).toBe("existing-aud");
+    expect(world.writes.some((w) => w.url.endsWith("/access/apps"))).toBe(false);
+  });
+
+  test("an account-wide application is not mistaken for this Worker's", async () => {
+    const world = emptyWorld();
+    // `worker` takes precedence over `all_workers`, so the account-wide policy
+    // is not the policy that was asked for — creating ours is the right move.
+    world.apps = [{ id: "a", aud: "all-aud", domain: "", destinations: [{ type: "all_workers" }] }];
+    const { report } = await run({ access: ["@example.com"], world });
+    expect(verdicts(report).access).toBe("created");
+    expect(report.accessAud).toBe("aud-1");
+  });
+
+  test("existing hostname applications are left alone", async () => {
+    const world = emptyWorld();
+    world.workers = undefined;
     world.apps = [
       { id: "a", aud: "existing-aud", domain: DOMAIN },
       { id: "b", aud: "bypass-aud", domain: `${DOMAIN}/api/upload` },
@@ -321,6 +463,15 @@ describe("access", () => {
     expect(verdicts(report).access).toBe("present");
     expect(verdicts(report)["access bypass"]).toBe("present");
     expect(report.accessAud).toBe("existing-aud");
+  });
+
+  test("a second run creates neither application again", async () => {
+    const first = await run({ access: ["@example.com"] });
+    first.world.writes.length = 0;
+    const second = await run({ access: ["@example.com"], world: first.world });
+    expect(verdicts(second.report).access).toBe("present");
+    expect(verdicts(second.report)["access bypass"]).toBe("present");
+    expect(second.world.writes).toEqual([]);
   });
 });
 

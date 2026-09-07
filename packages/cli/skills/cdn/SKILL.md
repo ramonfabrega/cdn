@@ -98,6 +98,7 @@ Do the post-deploy checklist: custom domain, purge token, and optionally Access
 |------|------|---------|-------------|
 | `--domain` | `string` |  | The hostname this Worker should own, e.g. cdn.example.com |
 | `--access` | `array` |  | Gate the explorer with Cloudflare Access. An email, or @domain for everyone there |
+| `--accessHostname` | `boolean` |  | Gate the hostname instead of the Worker. Worker-level Access does not support WebSockets |
 | `--dryRun` | `boolean` |  | Say what would happen and change nothing |
 | `--config` | `string` |  | Path to wrangler.jsonc (default: ./wrangler.jsonc) |
 
@@ -113,6 +114,7 @@ Do the post-deploy checklist: custom domain, purge token, and optionally Access
 | `steps[].detail` | `string` | yes |  |
 | `accessTeam` | `string` | no | Add as CDN_ACCESS_TEAM to let the Worker verify assertions |
 | `accessAud` | `string` | no | Add as CDN_ACCESS_AUD alongside it |
+| `accessMode` | `string` | no | worker covers routes, custom domains, workers.dev and previews; hostname does not |
 | `cannotDo` | `array` | yes | What this command cannot do, every run |
 | `commands` | `array` | yes | On a dry run, the commands that would have run |
 
@@ -125,7 +127,7 @@ cdn setup --domain cdn.example.com --dryRun true
 # Domain, purge token, cache check
 cdn setup --domain cdn.example.com
 
-# …and gate the explorer for everyone at example.com
+# …and gate the Worker for everyone at example.com, previews included
 cdn setup --domain cdn.example.com --access @example.com
 ```
 
