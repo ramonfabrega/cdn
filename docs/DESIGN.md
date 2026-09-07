@@ -4,6 +4,62 @@ Why things are the way they are. `CLAUDE.md` carries what every session needs;
 this file carries the decisions that were arguable, with the evidence that
 settled them. Newest first.
 
+## What `cdn setup` refuses to do (2026-09-07)
+
+Setup automates the post-deploy checklist. Two steps it deliberately does not,
+and both refusals are the interesting part.
+
+**Browser Cache TTL is read, never written.** The API takes an integer, and
+which integer means the dashboard's "Respect Existing Headers" is not documented
+anywhere on developers.cloudflare.com: the zone-settings schema says only
+`minimum 0`, and all three cache pages describe the option purely as a dropdown
+label. `0` is the widespread belief and is very likely right — and it is still
+not good enough, because this setting is ZONE-WIDE. Being wrong would not
+misconfigure this CDN; it would change browser caching for every other hostname
+on somebody's domain. So the step reads the value, says what to set it to, and
+says why it isn't setting it. If the mapping is ever confirmed, this becomes four
+lines and a test.
+
+**It does not create a Zero Trust organization.** Creating one picks a permanent
+team domain — `<name>.cloudflareaccess.com`, which then appears in every login
+URL forever. That is a naming decision, and a setup command should not make one
+on your behalf. It reports the absence and asks you to make it once.
+
+Two more findings worth recording, both from reading the docs rather than
+remembering them:
+
+**Access for Workers IS API-drivable**, via `POST /accounts/{id}/access/apps`
+with `destinations: [{ type: "preview_worker", worker_id }]`, and protecting a
+Worker that way covers "routes, Custom Domains, `workers.dev` hostname, and
+previews" in one application. That is strictly better than the two hostname
+applications setup creates today, because it also closes the preview gap the
+Previews section of the README describes — a preview shares production's
+bindings and is currently guarded only by the password. It is not built because
+the destination takes the Worker's *id*, not its name, and that is one more
+lookup whose shape has not been verified. Scoped, not done.
+
+**One-time PIN is no longer the default identity provider.** As of 2026-06-18
+new Zero Trust organizations get Cloudflare's own IdP instead, and OTP has to be
+created explicitly. This matters because it was the assumption under "Access
+needs nothing else configured": it still needs nothing, but for a different
+reason, and an instance that expected an emailed PIN will get a different login
+screen than the docs written before that date describe.
+
+## `--dry-run` reads for real (2026-09-07)
+
+The promise a dry run makes is not "it prints something plausible", it is "this
+is what the real run will do". The only way that promise holds is if both modes
+take the same code path — so `--dry-run` swaps the injected `fetch` for one that
+passes GETs through and stops at the first write, rather than branching inside
+each step.
+
+Reads going through is the load-bearing half. A dry run whose reads were also
+faked could only ever describe a hypothetical account: it could not tell you the
+route is already configured, or that a token by that name already exists, which
+is most of what anyone wants a dry run for. Every step is tested in both modes,
+and the dry one asserts that nothing was written — not the config file, not the
+account, not a command.
+
 ## One repo, two sides, one number between them (2026-09-07)
 
 The Worker and its clients are a contract: a route shape on one side, a parser on

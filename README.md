@@ -19,29 +19,74 @@ cards and all. See [`docs/DESIGN.md`](docs/DESIGN.md) for that measurement.
 
 ### After the first deploy
 
-1. **Set the secrets** (the deploy dialog prompts for them; `wrangler secret put <NAME>` later):
-   `CDN_PASSWORD` gates the explorer, `CDN_SESSION_SECRET` signs its cookie, `CDN_UPLOAD_TOKEN` is
-   the bearer every writer uses. Auth fails **closed** — unset means *nobody* gets in, never a
-   default. `.dev.vars.example` documents all four; copy it to `.dev.vars` for local dev.
-2. **Put it on your own domain** — one line in `wrangler.jsonc`, then push. The button can't do
-   this for you: the zone is yours, not Cloudflare's to bind.
-   ```jsonc
-   "routes": [{ "pattern": "cdn.example.com", "custom_domain": true }],
-   ```
-   wrangler provisions the DNS record and the certificate on deploy. Note that taking a custom
-   domain drops the `workers.dev` route that preview URLs hang off — see [Previews](#previews).
-3. **Set the zone's Browser Cache TTL to "Respect Existing Headers"** (Caching → Configuration).
-   This one is load-bearing and the Worker cannot enforce it — Cloudflare's 4-hour default
-   *overwrites* the `max-age` of anything served from cache, silently undoing the freshness policy.
-   See [Zone settings](#zone-settings-also-dashboard-only).
-4. **Optional: make overwrites global.** Add a `CDN_PURGE_TOKEN` secret plus the `CDN_ZONE_ID` /
-   `CDN_PUBLIC_ORIGIN` vars and a write invalidates every edge POP instead of just the one it ran
-   in. Skip it and an overwrite is fresh where you uploaded from and ages out within the hour
-   elsewhere — fine for a screenshot link, not for a release feed. See [Secrets](#secrets).
-5. **Optional: swap the password for real SSO.** The single `CDN_PASSWORD` is deliberately the
-   smallest thing that works for one person. For a team, put **Cloudflare Access** in front of `/`
-   and `/api/*` — it's a zone-level policy, no code change, and the cookie gate stays underneath as
-   a second factor. Object paths must stay outside the Access policy or public links break.
+**1. Set the secrets** (the deploy dialog prompts for them; `wrangler secret put <NAME>` later):
+`CDN_PASSWORD` gates the explorer, `CDN_SESSION_SECRET` signs its cookie, `CDN_UPLOAD_TOKEN` is the
+bearer every writer uses. Auth fails **closed** — unset means *nobody* gets in, never a default.
+`.dev.vars.example` documents all four; copy it to `.dev.vars` for local dev.
+
+**2. Run the rest.** Everything below step 1 is one command:
+
+```sh
+export CLOUDFLARE_API_TOKEN=...          # one broad token, used once, never stored
+cd packages/cli && bun link              # or: bun packages/cli/bin/cdn.ts
+
+cdn setup --domain cdn.example.com --dry-run     # what it would do
+cdn setup --domain cdn.example.com               # do it
+cdn setup --domain cdn.example.com --access @example.com   # …and gate it with Access
+```
+
+Every step **checks before it acts**, so running it twice is not different from running it once —
+which matters, because the state you're in when you reach for it is usually "the last run
+half-worked". It reports each step as `present`, `created`, `skipped`, `manual` or `failed`, and
+ends by naming what it cannot do at all.
+
+| Step | What it does |
+| --- | --- |
+| custom domain | Adds the `routes` line to `wrangler.jsonc` and deploys; wrangler provisions the DNS record and certificate. |
+| browser cache TTL | **Reads and reports only** — see below. |
+| purge token | Mints an account-owned token with *only* Cache Purge on your zone, verifies it, and stores it as `CDN_PURGE_TOKEN`. |
+| purge vars | Adds `CDN_ZONE_ID` and `CDN_PUBLIC_ORIGIN` to `wrangler.jsonc`. |
+| access | With `--access`: an Access application on the hostname allowing who you named, **plus a bypass on `/api/upload`** so every writer keeps working. |
+
+**The one step it won't do for you.** Browser Cache TTL must be **"Respect Existing Headers"**
+(Caching → Configuration) — it's load-bearing and the Worker cannot enforce it, because Cloudflare's
+4-hour default *overwrites* the `max-age` of anything served from cache. `cdn setup` reads it and
+tells you, but does not set it: the API takes an integer, and which integer means that option is
+undocumented, while the setting is zone-wide. Being wrong there wouldn't misconfigure this CDN, it
+would change browser caching for every other hostname on your domain. Two clicks, once.
+
+**The token you give it.** One broad token, for one run, read from the environment and written
+nowhere. It is *not* `CDN_PURGE_TOKEN` — that one is narrow, account-owned and minted **by** setup,
+and conflating them is how a Worker ends up holding a credential that can reconfigure the zone.
+Create it at **Manage Account → Account API Tokens** with:
+
+| Permission | Scope | Needed for |
+| --- | --- | --- |
+| `Zone Read` | the zone | Finding the zone id from your domain |
+| `Zone Settings Read` | the zone | Reading Browser Cache TTL |
+| `Account API Tokens Read` + `Write` | the account | Listing permission groups, and minting the purge token |
+| `Access: Apps and Policies Read` + `Write` | the account | `--access` only — the application and its bypass |
+| `Access: Organizations, Identity Providers, and Groups Read` | the account | `--access` only — finding your team domain |
+
+Delete it when setup is done. Everything it configured keeps working; the CDN never uses it again.
+
+**Doing it by hand instead** is entirely reasonable — every step is a documented dashboard action,
+and the sections below still describe each one. The route is one line:
+
+```jsonc
+"routes": [{ "pattern": "cdn.example.com", "custom_domain": true }],
+```
+
+Note that taking a custom domain drops the `workers.dev` route that preview URLs hang off — see
+[Previews](#previews).
+
+**On Access and the password.** `CDN_PASSWORD` is one string everyone knows and nobody rotates:
+right for one person, wrong for an organization. With Access in front, a verified
+`Cf-Access-Jwt-Assertion` **is** the session — set `CDN_ACCESS_TEAM` and `CDN_ACCESS_AUD` (setup
+prints both) and a team instance runs with no shared secret at all. The password stays as the
+fallback, because a preview URL outside the Access application still has to be reachable. The
+assertion is *verified*, never trusted: Access guards the front door, so a request arriving any
+other way can set whatever header it likes.
 
 Writers are anything that can `POST` a file with a bearer token: a shell one-liner, a CLI, an
 editor hook, a macOS Shortcut. They share **no code** with the Worker — send the bytes, get the URL
@@ -288,9 +333,19 @@ command.
   the mode back, and **deletes the file** if it isn't 0600: refusing to store a token is
   recoverable, storing a world-readable one is not.
 - **`packages/cli/src/cloudflare.ts`** — the Cloudflare API behind one door, with the same
-  injectable-fetch seam. Nothing calls it yet; it exists so that `cdn setup` adds calls rather than
-  plumbing. Its tests pin the trap: Cloudflare answers `200` with `success: false`, so the status
-  code is not the check.
+  injectable-fetch seam. Its tests pin the trap: Cloudflare answers `200` with `success: false`, so
+  the status code is not the check. `readOnlyFetch` is what `--dry-run` runs on — GETs pass
+  through, writes stop.
+- **`packages/cli/src/setup/`** — `cdn setup`. `wrangler.ts` is the local half (editing
+  `wrangler.jsonc` as *text*, so its comments survive; reading the account id and Worker name from
+  the tree rather than asking); `zone.ts` and `access.ts` are the API calls; `index.ts` is the
+  idempotent orchestration. Every shape came out of Cloudflare's reference, and where a value
+  couldn't be confirmed the code declines rather than guessing — see
+  [`docs/DESIGN.md`](docs/DESIGN.md).
+- **`src/access.ts`** — verifies an Access assertion: RS256 pinned, issuer and audience checked,
+  `exp`/`nbf` enforced, signing keys cached with one forced refetch on an unknown `kid` so a key
+  rotation costs a fetch and not an outage. Its tests sign real tokens with a generated keypair,
+  because every case in them is a way in if the check is wrong.
 - **`packages/cli/hooks/lib.ts`** — what is the hooks' alone: `emit` (the PostToolUse contract —
   additionalContext *and* systemMessage, so the URL survives even if the model forgets to relay it)
   and `slugFor` (a path hash, so re-sending one file overwrites its copy while two files sharing a

@@ -110,6 +110,12 @@ cutover, which is a deliberate, one-time, human-approved sequence:
   `SUPPORTED_CONTRACTS` is its twin. Bump only for a change a current client
   cannot survive, and move both in one commit — `bun run check` is what proves
   they agree.
+- **Cloudflare API shapes are looked up, not remembered.** Every path, body and
+  selector in `packages/cli/src/setup/` came out of the API reference, and where
+  a value could not be confirmed the code says so and declines rather than
+  guessing (see `browserCacheTtl`). Permission groups resolve by NAME at runtime
+  because the docs say ids are the stable key but publish none. If you add a
+  call, verify it the same way.
 - Boundary parsing, no casts; zod at the edges; `defined<T>()`-style
   optional handling over `as`.
 - Read `README.md` for the architecture, the caching policy, the
