@@ -58,6 +58,11 @@ cdn setup --domain cdn.example.com               # do it
 cdn setup --domain cdn.example.com --access @example.com   # …and gate it with Access
 ```
 
+**Run `--dry-run` first — it is also the token check.** Because a dry run's *reads* go through for
+real, a token missing a permission fails on the step that needs it, by name, before anything has
+been created or changed. That turns "mint a token, run setup, watch it half-work" into one command
+that tells you which permission you forgot.
+
 Every step **checks before it acts**, so running it twice is not different from running it once —
 which matters, because the state you're in when you reach for it is usually "the last run
 half-worked". It reports each step as `present`, `created`, `skipped`, `manual` or `failed`, and
@@ -505,18 +510,26 @@ works for an out-of-band push.
 The whole config lives in the Cloudflare dashboard — Workers Builds has no in-repo config file, so
 the settings are recorded here, both to check them and to rebuild them by hand.
 
-**A fresh press does not give you CI.** Measured on a real deploy, 2026-09-07: the button leaves
-**Build command empty** and sets **Deploy command to `bun run deploy`**. So a brand-new fork
-deploys every push without linting or testing it first. The Worker works — that is what the press
-proved — but the "CI lints + tests" half of the loop above is a thing you turn on, and this is the
-one post-deploy step `cdn setup` cannot do for you: the [Workers Builds
+**Workers Builds deploys; GitHub Actions checks.** Measured on a real deploy, 2026-09-07: the
+button leaves **Build command empty** and sets **Deploy command to `bun run deploy`**, so on its own
+a fresh fork would ship every push without linting or testing it. That is why
+[`.github/workflows/check.yml`](.github/workflows/check.yml) ships with the template — it runs
+`bun run check` on every PR and every push to `master`, needs no credential and no dashboard, and
+arrives with the repository the button creates.
+
+`cdn setup` could not have done it for you: the [Workers Builds
 API](https://developers.cloudflare.com/workers/ci-cd/builds/api-reference/) requires a
 **user-scoped** token and rejects account-scoped ones, and setup's token is account-scoped by
-design. Two fields in the dashboard, once.
+design. Setting the dashboard's Build command to `bun run check` as well is belt-and-braces — it
+blocks the deploy rather than merely reporting — but it is optional now rather than load-bearing.
+
+**To make the check actually gate production**, turn on branch protection requiring it. `master` is
+production here, so gating the merge gates the deploy. One repository setting, and the only manual
+step left in this loop.
 
 | Setting | The button sets | Set it to |
 | --- | --- | --- |
-| Build command | *(empty)* | **`bun run check`** |
+| Build command | *(empty)* | *(optional)* `bun run check` — Actions already runs it |
 | Deploy command | `bun run deploy` | either; both run `wrangler deploy` |
 | Production branch | `master` | `master` — master is production here |
 | Builds for non-production branches | enabled | enabled |

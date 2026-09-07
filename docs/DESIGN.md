@@ -49,6 +49,45 @@ world-readable token, say — the step fails loudly and says the secret is only
 shown once, because at that point the value is genuinely gone and the fix is to
 delete the secret and re-run rather than to hunt for it.
 
+## GitHub Actions checks, Workers Builds deploys (2026-09-07)
+
+CLAUDE.md's locked decisions said "Workers Builds is CI (`bun run check`)". The
+press falsified it: the button leaves **Build command empty**, so a fresh fork
+deploys every push without linting or testing it. The decision described the
+author's instance, which was configured by hand years ago — not the template.
+
+Two ways to fix that, and the difference is who has to do something.
+
+**The dashboard route** is two fields on the Workers Builds page, and it is
+strictly better in one respect: the Build command runs BEFORE the deploy, so a
+failing check blocks the ship. But it is manual, per fork, in a place nobody
+knows to look, and `cdn setup` cannot do it — the Workers Builds API requires a
+**user-scoped** token and explicitly rejects account-scoped ones, while setup's
+token is account-scoped precisely so it can be deleted afterwards without
+touching your user.
+
+**Shipping `.github/workflows/check.yml`** costs nothing and arrives with the
+repository the button creates. No credential, no dashboard, no decision, no
+Cloudflare involvement at all. Every fork gets CI on its first push.
+
+So: **Actions is the check, Workers Builds is the deploy.** That split is not a
+compromise — it is the right shape. The check has no business holding a
+Cloudflare credential, and the deploy has no business being a thing you wire up.
+
+**What the split costs, stated plainly:** Actions runs in *parallel* with the
+deploy rather than in front of it, so a red check on `master` does not by itself
+stop the ship. Closing that is one repository setting — branch protection
+requiring the check — and it works precisely because `master` is production here:
+gating the merge gates the deploy. It stays manual because it is a GitHub
+setting on someone else's repository, and because a template that demanded it
+would be a template that fails closed on a solo user pushing to their own master.
+Setting the dashboard Build command as well remains available as belt-and-braces
+for anyone who wants the deploy itself gated.
+
+The workflow pins its Bun version rather than tracking latest. A CI that changes
+underneath you turns a red build into a question about the runner instead of
+about the code, which is the opposite of what a check is for.
+
 ## Resolving a permission by name needs the scope too (2026-09-07)
 
 `cdn setup` resolves the Cache Purge permission group by NAME at runtime rather

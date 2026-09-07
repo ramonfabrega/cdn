@@ -1,0 +1,43 @@
+# CI, for every fork, with nothing to configure.
+#
+# The Deploy to Cloudflare button connects Workers Builds, which DEPLOYS — and
+# measured on a real press (2026-09-07) it leaves the Build command empty, so a
+# fresh fork ships every push without linting or testing it. Setting that field
+# is two clicks in a dashboard nobody knows to open, and `cdn setup` cannot do it
+# for you: the Workers Builds API requires a user-scoped token and rejects the
+# account-scoped one setup uses by design.
+#
+# This file needs no credential, no dashboard and no decision. It arrives with
+# the repository the button creates and runs from the first push.
+#
+# The division of labour: GitHub Actions is the CHECK, Workers Builds is the
+# DEPLOY. To make the check actually gate production — master is production here
+# — turn on branch protection requiring it, which is one repository setting and
+# the only manual step left in this loop.
+
+name: check
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Pinned rather than "latest": a CI that changes underneath you turns
+          # a red build into a question about the runner instead of the code.
+          bun-version: 1.2.15
+
+      # `bun run check` is the whole build — install, lint, and both test
+      # runners (vitest in workerd for src/, bun:test for packages/cli and
+      # macos/). One command here and locally, so CI cannot drift from what you
+      # ran before pushing. Deliberately NOT `bun test`: Bun's own runner
+      # shadows the script name and exits 0 without running vitest.
+      - run: bun run check

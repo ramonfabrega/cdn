@@ -75,7 +75,9 @@ hooks second, curl-based Shortcut third, the incur CLI last.
   repo (hooks.json + the generated skill). Phase two, after the Worker and
   CLI have run for a second organization.
 - **Nothing else added.** Hono + takumi stay the only runtime deps; no build
-  step; Workers Builds is CI (`bun run check`); no config format beyond
+  step; GitHub Actions is the check and Workers Builds is the deploy (the
+  button leaves Build command empty, so a fork has no CI otherwise — measured,
+  2026-09-07); no config format beyond
   dotenv; no keychain dependency.
 
 ## Do not break the live instance
