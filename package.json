@@ -7,9 +7,11 @@
     "deploy": "wrangler deploy",
     "preview": "wrangler versions upload",
     "types": "wrangler types",
-    "test": "vitest run",
+    "test": "vitest run && bun test hooks/",
+    "test:worker": "vitest run",
+    "test:hooks": "bun test hooks/",
     "lint": "biome check .",
-    "check": "bun install --frozen-lockfile && biome check . && vitest run"
+    "check": "bun install --frozen-lockfile && biome check . && vitest run && bun test hooks/"
   },
   "cloudflare": {
     "bindings": {

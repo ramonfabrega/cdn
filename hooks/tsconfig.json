@@ -1,0 +1,24 @@
+{
+  // The hooks run in Bun, not workerd, so they cannot share the root tsconfig:
+  // that one loads worker-configuration.d.ts and the vitest-pool-workers types,
+  // where `Bun` is undefined and `R2Bucket` is global. Two runtimes in one repo,
+  // two tsconfigs. Neither is executed by `bun run check` (Bun strips types
+  // without checking them) — this exists so an editor is right about which
+  // globals are in scope.
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "moduleDetection": "force",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "allowJs": false,
+    "types": ["@types/bun"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true
+  },
+  "include": ["**/*.ts"]
+}
