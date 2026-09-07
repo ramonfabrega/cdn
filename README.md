@@ -60,7 +60,11 @@ produces onto your CDN:
   The claude.ai URL stays the interactive one (comments, versions, runtime capabilities); the mirror
   is the one a person without a Claude account can open. Artifact HTML is authored head-less — the
   publisher adds `<!doctype>`, charset, viewport and a small reset at publish time — so the hook
-  reproduces that skeleton, or the mirror renders unstyled and unscaled on a phone.
+  reproduces that skeleton, or the mirror renders unstyled and unscaled on a phone. Since it is
+  building a `<head>` anyway, it adds unfurl meta (title, the first heading as the description, and
+  `noindex`, matching folder pages) so a pasted mirror link reads as something rather than a bare
+  URL. No `og:image`: a generic card would say nothing the title doesn't, and a real thumbnail means
+  Cloudflare Browser Rendering — see open thread 3.
 - **`hooks/user-file-mirror.ts`** — every file Claude attaches also gets a URL. The file cards are
   local paths, which is fine at the machine that wrote them and useless from a phone or an ssh
   session; worse, the usual source is a job's tmp dir that dies with the job.

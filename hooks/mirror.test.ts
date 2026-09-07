@@ -195,6 +195,93 @@ describe("artifact-mirror", () => {
     }
   });
 
+  // A pasted mirror link should unfurl as something, not as a bare URL. No
+  // og:image on purpose — see the comment on wrap().
+  test("carries unfurl meta and noindex, pointing at where the file actually lands", async () => {
+    const stub = startStub();
+    try {
+      const src = join(dir, "q3-report.html");
+      await Bun.write(src, "<title>Q3 Report</title>\n<h1>Revenue is <em>up</em></h1>");
+      const res = await runHook("artifact-mirror.ts", publish(src), {
+        CDN_HOST: stub.host,
+        CDN_TOKEN: "t0ken",
+      });
+
+      expect(res.code).toBe(0);
+      const body = stub.received[0]?.body ?? "";
+      expect(body).toContain('<meta property="og:title" content="Q3 Report">');
+      // The first heading, with its markup stripped — one line that says what the
+      // page is, rather than an empty description.
+      expect(body).toContain('<meta property="og:description" content="Revenue is up">');
+      expect(body).toContain('<meta property="og:type" content="website">');
+      expect(body).toContain('<meta name="twitter:card" content="summary">');
+      expect(body).toContain('<meta name="robots" content="noindex">');
+      expect(body).not.toContain("og:image");
+
+      // og:url has to be inside the uploaded bytes, so it is composed — and it must
+      // name exactly the key the upload used.
+      const key = stub.received[0]?.key ?? "";
+      expect(body).toContain(`<meta property="og:url" content="http://${stub.host}/${key}">`);
+    } finally {
+      stub.stop();
+    }
+  });
+
+  test("with no heading, the description falls back to the title", async () => {
+    const stub = startStub();
+    try {
+      const src = join(dir, "bare.html");
+      await Bun.write(src, "<title>Just A Title</title>\n<p>no heading here</p>");
+      await runHook("artifact-mirror.ts", publish(src), {
+        CDN_HOST: stub.host,
+        CDN_TOKEN: "t0ken",
+      });
+      expect(stub.received[0]?.body).toContain(
+        '<meta property="og:description" content="Just A Title">'
+      );
+    } finally {
+      stub.stop();
+    }
+  });
+
+  test("escapes a title with markup characters in it", async () => {
+    const stub = startStub();
+    try {
+      const src = join(dir, "quoted.html");
+      await Bun.write(src, `<title>A "quoted" & <angled> title</title>\n<h1>hi</h1>`);
+      await runHook("artifact-mirror.ts", publish(src), {
+        CDN_HOST: stub.host,
+        CDN_TOKEN: "t0ken",
+      });
+      const body = stub.received[0]?.body ?? "";
+      expect(body).toContain(
+        '<meta property="og:title" content="A &quot;quoted&quot; &amp; &lt;angled&gt; title">'
+      );
+      expect(body).toContain("<title>A &quot;quoted&quot; &amp; &lt;angled&gt; title</title>");
+    } finally {
+      stub.stop();
+    }
+  });
+
+  // Hoisting means moving. Two <title> tags render fine but give a scraper a
+  // different answer than the tab shows.
+  test("hoisting the title removes it from the body", async () => {
+    const stub = startStub();
+    try {
+      const src = join(dir, "once.html");
+      await Bun.write(src, "<title>Only Once</title>\n<h1>body</h1>");
+      await runHook("artifact-mirror.ts", publish(src), {
+        CDN_HOST: stub.host,
+        CDN_TOKEN: "t0ken",
+      });
+      const body = stub.received[0]?.body ?? "";
+      expect(body.match(/<title>/gi)).toHaveLength(1);
+      expect(body).toContain("<h1>body</h1>");
+    } finally {
+      stub.stop();
+    }
+  });
+
   test("leaves a document that already has a doctype alone", async () => {
     const stub = startStub();
     try {
