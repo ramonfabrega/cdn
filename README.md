@@ -33,6 +33,13 @@ Auth fails **closed** throughout. With no password at all, `/login` says so and 
 than refusing every password you try — and no session cookie can be valid, because there is no key
 to check one against.
 
+**Leave the deploy form's "Protect with Cloudflare Access" toggle OFF.** It protects the whole
+Worker, `POST /api/upload` included, so Access answers every script's upload with a login page and
+the CLI, the hooks and the Shortcut all break at once. Use `cdn setup --access` instead: it creates
+the same Worker-level application *and* the path-scoped bypass that keeps the bearer working, in
+one step. If you already flipped it, `cdn setup --access` repairs it — it finds the existing
+application and adds the missing bypass.
+
 `.dev.vars.example` **is** that dialog, which is why it lists exactly one key and gives it no
 value. Measured on a real press: every uncommented key there becomes a field, every field is
 **required** (the browser refuses to submit an empty one), the value becomes the prefilled default,
