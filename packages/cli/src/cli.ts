@@ -23,9 +23,12 @@
 
 import { Cli, z } from "incur";
 
+import { readOnlyFetch } from "./cloudflare.ts";
 import { hostsDir, listHosts, resolveTarget } from "./hosts.ts";
 import { humanSize, keyForFile, keyInDir, prefixForDir, walk } from "./keys.ts";
 import { writeHostFile } from "./login.ts";
+import { runSetup } from "./setup/index.ts";
+import { accountIdFrom, type Command, recordingRunner, runCommand } from "./setup/wrangler.ts";
 import { upload, verify } from "./upload.ts";
 
 // The CLI's whole environment, declared. The two CDN_* vars are the documented
@@ -368,5 +371,107 @@ auth.command("status", {
 });
 
 cli.command(auth);
+
+cli.command("setup", {
+  description: "Do the post-deploy checklist: custom domain, purge token, and optionally Access",
+  options: z.object({
+    domain: z.string().describe("The hostname this Worker should own, e.g. cdn.example.com"),
+    access: z
+      .array(z.string())
+      .optional()
+      .describe(
+        "Gate the explorer with Cloudflare Access. An email, or @domain for everyone there"
+      ),
+    dryRun: z.boolean().optional().describe("Say what would happen and change nothing"),
+    config: z.string().optional().describe("Path to wrangler.jsonc (default: ./wrangler.jsonc)"),
+  }),
+  env: z.object({
+    CLOUDFLARE_API_TOKEN: z
+      .string()
+      .optional()
+      .describe("The broad setup token. Read from the environment only — never written anywhere"),
+  }),
+  output: z.object({
+    domain: z.string(),
+    dryRun: z.boolean(),
+    steps: z.array(
+      z.object({
+        step: z.string(),
+        verdict: z.enum(["present", "created", "skipped", "manual", "failed"]),
+        detail: z.string(),
+      })
+    ),
+    accessTeam: z
+      .string()
+      .optional()
+      .describe("Add as CDN_ACCESS_TEAM to let the Worker verify assertions"),
+    accessAud: z.string().optional().describe("Add as CDN_ACCESS_AUD alongside it"),
+    cannotDo: z.array(z.string()).describe("What this command cannot do, every run"),
+    commands: z.array(z.string()).describe("On a dry run, the commands that would have run"),
+  }),
+  examples: [
+    { options: { domain: "cdn.example.com", dryRun: true }, description: "See what it would do" },
+    { options: { domain: "cdn.example.com" }, description: "Domain, purge token, cache check" },
+    {
+      options: { domain: "cdn.example.com", access: ["@example.com"] },
+      description: "…and gate the explorer for everyone at example.com",
+    },
+  ],
+  hint: "Needs CLOUDFLARE_API_TOKEN — one broad token, used once, never stored. It is NOT the purge token: that one is narrow, account-owned, and minted by this command.",
+  async run(c) {
+    const token = c.env.CLOUDFLARE_API_TOKEN?.trim();
+    if (!token) {
+      return c.error({
+        code: "NO_API_TOKEN",
+        message:
+          "CLOUDFLARE_API_TOKEN is not set. Create a token with the permissions in the README's setup table, and pass it for this one run — setup never writes it anywhere.",
+        retryable: false,
+      });
+    }
+
+    const configPath = c.options.config ?? "wrangler.jsonc";
+    // The account id comes from the session, not from you. `--json` is the
+    // documented structured form; the id is 32 hex either way, so one regex
+    // reads both and there is no second parser to keep true.
+    const whoami = await runCommand({ argv: ["wrangler", "whoami", "--json"] });
+    const accountId = accountIdFrom(`${whoami.stdout}\n${whoami.stderr}`);
+    if (!accountId) {
+      return c.error({
+        code: "NOT_LOGGED_IN",
+        message: "could not read an account id from `wrangler whoami` — run `wrangler login` first",
+        retryable: true,
+      });
+    }
+
+    const commands: Command[] = [];
+    const dryRun = c.options.dryRun === true;
+    const report = await runSetup({
+      domain: c.options.domain,
+      access: c.options.access ?? [],
+      dryRun,
+      configPath,
+      accountId,
+      cf: { token, ...(dryRun ? { fetch: readOnlyFetch() } : {}) },
+      run: dryRun ? recordingRunner(commands) : runCommand,
+      commands,
+      readFile: (p) => Bun.file(p).text(),
+      writeFile: (p, text) => Bun.write(p, text).then(() => undefined),
+    });
+
+    // The checklist IS the result: incur renders it for a person and hands the
+    // same object to an agent, so there is no second formatter to drift.
+    const failed = report.steps.some((s) => s.verdict === "failed");
+    return failed
+      ? c.error({
+          code: "SETUP_INCOMPLETE",
+          message: report.steps
+            .filter((s) => s.verdict === "failed")
+            .map((s) => `${s.step}: ${s.detail}`)
+            .join("; "),
+          retryable: true,
+        })
+      : c.ok(report);
+  },
+});
 
 export default cli;

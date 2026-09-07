@@ -105,4 +105,34 @@ const describeErrors = (errors: unknown): string => {
 const read = (value: unknown, key: string): unknown =>
   typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
 
+/**
+ * A fetch that still READS but never WRITES — what `--dry-run` runs on.
+ *
+ * The important half is that GETs go through. A dry run whose reads were also
+ * faked could only ever describe a hypothetical account: it could not tell you
+ * that the zone is already configured, or that a token by that name already
+ * exists, which is most of what you want a dry run for. So it checks for real
+ * and stops exactly at the point of changing something.
+ */
+export const readOnlyFetch = (
+  attempted: { method: string; url: string; body?: string }[] = [],
+  inner: typeof globalThis.fetch = globalThis.fetch
+): typeof globalThis.fetch => {
+  const wrapped = async (input: string | URL | Request, init?: RequestInit) => {
+    const method = (
+      init?.method ?? (input instanceof Request ? input.method : "GET")
+    ).toUpperCase();
+    if (method === "GET" || method === "HEAD") return inner(input, init);
+    attempted.push({
+      method,
+      url: String(input instanceof Request ? input.url : input),
+      ...(typeof init?.body === "string" ? { body: init.body } : {}),
+    });
+    // Shaped like a success so the caller's own code path continues and the dry
+    // run describes the whole sequence rather than stopping at the first write.
+    return Response.json({ success: true, errors: [], messages: [], result: null });
+  };
+  return wrapped as typeof globalThis.fetch;
+};
+
 const asMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));

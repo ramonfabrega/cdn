@@ -80,6 +80,57 @@ Show every configured host, which one is in effect, and why
 
 > Precedence is flags > env > config file: --host beats CDN_HOST, which beats the sole file in the hosts directory.
 
+## cdn setup
+
+### cdn setup
+
+Do the post-deploy checklist: custom domain, purge token, and optionally Access
+
+#### Environment Variables
+
+| Name | Type | Required | Default | Description |
+|------|------|----------|---------|-------------|
+| `CLOUDFLARE_API_TOKEN` | `string` | no |  | The broad setup token. Read from the environment only — never written anywhere |
+
+#### Options
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--domain` | `string` |  | The hostname this Worker should own, e.g. cdn.example.com |
+| `--access` | `array` |  | Gate the explorer with Cloudflare Access. An email, or @domain for everyone there |
+| `--dryRun` | `boolean` |  | Say what would happen and change nothing |
+| `--config` | `string` |  | Path to wrangler.jsonc (default: ./wrangler.jsonc) |
+
+#### Output
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `domain` | `string` | yes |  |
+| `dryRun` | `boolean` | yes |  |
+| `steps` | `array` | yes |  |
+| `steps[].step` | `string` | yes |  |
+| `steps[].verdict` | `string` | yes |  |
+| `steps[].detail` | `string` | yes |  |
+| `accessTeam` | `string` | no | Add as CDN_ACCESS_TEAM to let the Worker verify assertions |
+| `accessAud` | `string` | no | Add as CDN_ACCESS_AUD alongside it |
+| `cannotDo` | `array` | yes | What this command cannot do, every run |
+| `commands` | `array` | yes | On a dry run, the commands that would have run |
+
+#### Examples
+
+```sh
+# See what it would do
+cdn setup --domain cdn.example.com --dryRun true
+
+# Domain, purge token, cache check
+cdn setup --domain cdn.example.com
+
+# …and gate the explorer for everyone at example.com
+cdn setup --domain cdn.example.com --access @example.com
+```
+
+> Needs CLOUDFLARE_API_TOKEN — one broad token, used once, never stored. It is NOT the purge token: that one is narrow, account-owned, and minted by this command.
+
 ## cdn up
 
 ### cdn up
