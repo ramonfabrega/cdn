@@ -46,12 +46,112 @@ cards and all. See [`docs/DESIGN.md`](docs/DESIGN.md) for that measurement.
 Writers are anything that can `POST` a file with a bearer token: a shell one-liner, a CLI, an
 editor hook, a macOS Shortcut. They share **no code** with the Worker — send the bytes, get the URL
 back — so the classification and key rules stay server-side and there is exactly one write path to
-secure.
+secure. Two writers ship in this repo, under `hooks/` — see below.
+
+## Claude Code hooks
+
+Optional, and the reason most files land on the author's instance. Two
+[PostToolUse hooks](https://docs.claude.com/en/docs/claude-code/hooks) that mirror what a session
+produces onto your CDN:
+
+- **`hooks/artifact-mirror.ts`** — every published Artifact also gets a static copy on your host.
+  The claude.ai URL stays the interactive one (comments, versions, runtime capabilities); the mirror
+  is the one a person without a Claude account can open. Artifact HTML is authored head-less — the
+  publisher adds `<!doctype>`, charset, viewport and a small reset at publish time — so the hook
+  reproduces that skeleton, or the mirror renders unstyled and unscaled on a phone.
+- **`hooks/user-file-mirror.ts`** — every file Claude attaches also gets a URL. The file cards are
+  local paths, which is fine at the machine that wrote them and useless from a phone or an ssh
+  session; worse, the usual source is a job's tmp dir that dies with the job.
+
+Neither can fail the tool it follows: every error path exits 0 with one line in the transcript. A
+mirror that didn't happen is worth a note, not a broken publish.
+
+### Installing them
+
+**1. A token file.** One file per host, `chmod 600`, dotenv:
+
+```bash
+mkdir -p ~/.config/cdn/hosts
+printf 'CDN_TOKEN=%s\n' "$YOUR_UPLOAD_TOKEN" > ~/.config/cdn/hosts/cdn.example.com.env
+chmod 600 ~/.config/cdn/hosts/cdn.example.com.env
+```
+
+The filename is the host. With exactly one file there, it is the default and nothing else needs
+configuring. `CDN_HOST` and `CDN_TOKEN` in the environment override the file (both set ⇒ no file is
+read at all). There is no `login` command yet — that belongs to the CLI, which isn't written.
+
+**2. The hooks, in `settings.json`.** User-level (`~/.claude/settings.json`) for every session, or
+a project's `.claude/settings.json` for one repo. Point the command at your clone:
+
+```jsonc
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.bun/bin/bun \"$HOME\"/code/cdn/hooks/artifact-mirror.ts",
+            "timeout": 30,
+            "statusMessage": "Mirroring artifact to the CDN…"
+          }
+        ]
+      },
+      {
+        "matcher": "SendUserFile",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME\"/.bun/bin/bun \"$HOME\"/code/cdn/hooks/user-file-mirror.ts",
+            "timeout": 120,
+            "statusMessage": "Mirroring to the CDN…"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Use an absolute path to `bun` as well as to the hook: a hook inherits whatever PATH launched Claude
+Code, which is not guaranteed to carry `~/.bun/bin`. The timeouts are the ceiling for an upload —
+the hooks abort just under them, so a stalled connection reports itself instead of being killed
+mid-flight and looking like the hook never ran.
+
+Packaging this as a one-command install (a Claude Code plugin) is a later phase; for now it is a
+snippet and a token file.
+
+### Routing a session to a different host
+
+Which host a session mirrors to is **config, not code**: set `CDN_HOST` in the `env` of whatever
+settings scope should mirror where. There is no map from directory to host inside the hooks, and
+there shouldn't be — Claude Code's settings already resolve user → project → local in the right
+order, and a second map would be a second thing to keep in sync.
+
+```jsonc
+// ~/.claude/settings.json — the default for every session
+{ "env": { "CDN_HOST": "cdn.example.com" } }
+
+// <work repo>/.claude/settings.json — this repo's sessions mirror to the company host
+{ "env": { "CDN_HOST": "files.work.example" } }
+```
+
+Each host needs its own `~/.config/cdn/hosts/<host>.env`. Configure two and leave `CDN_HOST` unset
+and the hooks refuse to guess — they name both and tell you to choose. Mirroring a file to the wrong
+organization is not a failure you want to learn about from the recipient.
+
+To point a hook at a Worker you're running locally, set `CDN_HOST=localhost:8787`: loopback hosts
+are reached over http, everything else over https.
 
 ## Files
 
-Source lives under `src/` (Worker app + pure lib + tests); `public/` holds the static UI; the
-package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the repo root.
+Source lives under `src/` (Worker app + pure lib + tests); `public/` holds the static UI; `hooks/`
+holds the optional Claude Code hooks; the package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit
+at the repo root.
+
+Two runtimes, therefore two test runners: `src/` runs in **workerd** (vitest, Miniflare R2) and
+`hooks/` runs in **Bun** (`bun:test`). `bun run check` runs both, so CI is still one command.
 
 - **`src/lib/cdn.ts`** — pure, Worker-internal helpers: MIME map, key→ext classification, and the
   public-URL builder. Zero deps, no runtime-specific imports (own `extname`) → trivially testable.
@@ -117,6 +217,20 @@ package configs (`wrangler.jsonc`, `tsconfig.json`, …) sit at the repo root.
 - **`.dev.vars.example`** — the four secrets in dotenv. Two readers: the Deploy to Cloudflare
   button prompts from it, and you copy it to `.dev.vars` for local dev. Descriptions for the deploy
   dialog live in `package.json` under `cloudflare.bindings`.
+- **`hooks/hosts.ts`** — where a token lives: `~/.config/cdn/hosts/<host>.env`, dotenv, one file
+  per host (so "which host" is a filename — `ls` lists them, `rm` is the logout), mode 0600,
+  `XDG_CONFIG_HOME` honoured. Resolution is clig.dev precedence with flags left out until there's
+  a CLI to have them: `CDN_HOST` + `CDN_TOKEN` in the env win outright, else `CDN_HOST` names the
+  file, else the sole `*.env` is the default, else an error that **names the path to create**.
+  Returns a value rather than throwing — its callers must never fail the tool they ran after.
+- **`hooks/lib.ts`** — `emit` (the PostToolUse contract: additionalContext *and* systemMessage, so
+  the URL survives even if the model forgets to relay it), `slugFor` (a path hash, so re-sending
+  one file overwrites its copy while two files sharing a basename never collide), and `upload` —
+  one POST with the bearer, the response's own url trusted over a locally built one. https except
+  to loopback, which is `wrangler dev`.
+- **`hooks/mirror.test.ts`** — spawns the real scripts and speaks the real contract (JSON in, one
+  JSON line out, exit 0) against a `Bun.serve` stub. Importing a function out of a hook would pass
+  while the script itself failed to parse stdin, which is the failure that actually happens.
 - **`public/`** — vanilla, event-delegated, zero-build UI: `index.html` + `styles.css` + `app.js`
   (separate on disk; the Worker folds them into one response). Left **folder rail** (scope by prefix)
   · flat sortable/searchable list · ⌘K search · `⋯`/right-click menus · centered modals · animated delete
@@ -156,13 +270,20 @@ bun run dev            # wrangler dev → http://localhost:8787, local R2 sim + 
 knows about `BUCKET` and `ASSETS` and nothing else. For real R2 data locally use
 `bun run dev --remote` (needs `wrangler login`).
 
-- `bun run test` — `vitest` in workerd: `src/lib/` units, `src/storage.ts`, and the Worker routing
-  (`src/worker.test.ts`, via `SELF`) against a **local Miniflare R2** (`@cloudflare/vitest-pool-workers`,
-  per-test isolation). Hermetic — no real R2, no network.
+- `bun run test` — both suites. `test:worker` is `vitest` in workerd (`src/lib/` units,
+  `src/storage.ts`, and the Worker routing via `SELF`) against a **local Miniflare R2**
+  (`@cloudflare/vitest-pool-workers`, per-test isolation); `test:hooks` is `bun test hooks/`, which
+  spawns the hook scripts against a stub server on loopback. Both hermetic — no real R2, no network
+  off the machine. vitest is scoped to `src/**` in `vitest.config.ts` so it never tries to run Bun
+  code inside workerd.
 - `bun run lint` — format + lint (`biome.jsonc`); `bunx biome check --write .` to fix in place.
-- `bun run check` — exactly what CI runs (install + lint + test). Run it before pushing and a green
-  build is a formality. (`bun run test`, never `bun test` — that's bun's own runner, not vitest.)
-- One tsconfig (`tsconfig.json`, Worker types covering `src/`).
+- `bun run check` — exactly what CI runs (install + lint + both suites). Run it before pushing and a
+  green build is a formality. (`bun run test`, never `bun test` — that's bun's own runner, which
+  would shadow the script and exit 0. `bun test hooks/` inside the script is that runner, on
+  purpose, aimed at the one directory that wants it.)
+- Two tsconfigs, one per runtime: `tsconfig.json` (Worker types, `src/`) and `hooks/tsconfig.json`
+  (Bun types). Neither is executed by `check` — Bun strips types without checking them — so they
+  exist to make an editor right about which globals are in scope.
 
 To **ship**: branch → PR (CI lints + tests, and comments a preview URL you can click) → merge to
 your production branch (CI deploys). No manual `deploy` step in the normal loop — see below.

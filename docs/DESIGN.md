@@ -4,6 +4,61 @@ Why things are the way they are. `CLAUDE.md` carries what every session needs;
 this file carries the decisions that were arguable, with the evidence that
 settled them. Newest first.
 
+## Two runtimes, two test runners (2026-09-07)
+
+The hooks run in Bun and the Worker runs in workerd, and that is not a thing to
+paper over: `Bun.file` does not exist in workerd, and `R2Bucket` does not exist
+in Bun. So `hooks/` gets `bun:test` and its own tsconfig, `src/` keeps vitest and
+the root one, and `bun run check` runs both — CI stays one command, which is the
+property that actually mattered.
+
+The load-bearing line is `test: { include: ["src/**/*.test.ts"] }` in
+`vitest.config.ts`. Vitest's default glob would otherwise sweep `hooks/*.test.ts`
+into workerd, where they fail on a global that isn't there — a confusing failure,
+because the code is fine and the runner is wrong.
+
+Note the hazard CLAUDE.md already warns about, from the other side: `bun test` is
+Bun's own runner and shadows a `test` script silently. That is why `check` calls
+`vitest run` directly rather than `bun run test`, and why `bun test hooks/` is
+written with a path — it is the real runner, deliberately, aimed at the one
+directory that wants it.
+
+## The hooks stopped shelling out (2026-09-07)
+
+The two mirror hooks used to spawn a `share` CLI, and patch `PATH` so that CLI
+could find Homebrew, so it could find a password manager, so it could find the
+upload token. Four links, one purpose: answer *where is the token*.
+
+`hooks/hosts.ts` answers it in one place — `~/.config/cdn/hosts/<host>.env` —
+and the chain collapses. What is left is a POST with a bearer, which `fetch`
+already does. The hooks now depend on nothing being installed: no CLI on disk, no
+PATH assumption, no password manager.
+
+Format and layout are chosen by the readers, not by taste. Three are meant to
+share these files — a Bun hook, a Bun CLI, and a bash script on a Mac with no
+`jq` — and dotenv is the only shape all three parse natively (wrangler's
+`.dev.vars` is already it). One file per host rather than one file with sections,
+because then "which host" is a filename: `ls` is the list command and `rm` is the
+logout.
+
+**Two configured hosts and no `CDN_HOST` is an error, not a guess.** This is the
+one place the resolver could have been convenient and isn't. Picking the
+alphabetically-first host would mirror someone's file to the wrong organization,
+and that is a failure you learn about from the recipient. Every error names the
+path to create, because "not configured" leaves you guessing at a directory you
+have never seen.
+
+Resolution returns a value rather than throwing: its callers are hooks that must
+never fail the tool they ran after, so a missing config has to be something they
+can turn into one line of transcript.
+
+Routing stays out of the code entirely. Which host a session mirrors to is
+`CDN_HOST` in that scope's Claude Code settings `env` — user-level for the
+default, a project's `.claude/settings.json` for a repo that mirrors elsewhere.
+A directory→host map inside the hooks was considered and rejected: the settings
+already resolve user → project → local in the right order, and a second map is a
+second thing to keep in sync with the first.
+
 ## The og:image cards stay in the bundle (2026-09-07)
 
 The cards are drawn by takumi, whose renderer is a 3.6 MB WASM module — by far

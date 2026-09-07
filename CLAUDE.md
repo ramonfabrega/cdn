@@ -31,6 +31,13 @@ optional purge vars are read through `optionalVar()` rather than declared, and
 `.dev.vars.example` + `package.json` `cloudflare.bindings` are what the button
 prompts from.
 
+Phase 2 landed the same day: `hooks/` holds the two mirror hooks and
+`hooks/hosts.ts`, the one reader of `~/.config/cdn/hosts/<host>.env`. The hooks
+shell out to nothing — no CLI, no PATH patch, no password manager — they resolve
+a host and POST with fetch. **Which host is config, not code**: `CDN_HOST` in a
+Claude Code settings scope's `env`. Do not add a directory→host map; the settings
+already resolve user → project → local.
+
 Who invokes what, measured on the author's instance: sessions and hooks make
 most uploads; humans use the explorer's drop zone and the Shortcut; the CLI
 by hand is rare. Build order follows that: Worker + button first, hosts file +
@@ -87,10 +94,12 @@ cutover, which is a deliberate, one-time, human-approved sequence:
 
 ## Conventions
 
-- Bun-first (`Bun.file`, `bun:test` where not in workerd), biome, vitest in
-  workerd against a local Miniflare R2 — hermetic, no real R2 in tests.
-  `bun run check` is what CI runs; `bun run test` never `bun test` (bun's own
-  runner shadows the script and exits 0).
+- Two runtimes, two runners: `src/` is workerd (vitest, local Miniflare R2),
+  `hooks/` is Bun (`bun:test`). vitest is scoped to `src/**` in its config so it
+  never sweeps up Bun code; `bun run check` runs both, so CI stays one command.
+  Hermetic — no real R2, no network off the machine. `bun run test` never
+  `bun test` (bun's own runner shadows the script and exits 0); the `bun test
+  hooks/` inside `check` is that runner on purpose, aimed at one directory.
 - Boundary parsing, no casts; zod at the edges; `defined<T>()`-style
   optional handling over `as`.
 - Read `README.md` for the architecture, the caching policy, the
